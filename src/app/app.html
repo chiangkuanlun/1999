@@ -4,6 +4,10 @@
       <span class="kicker">MUNICIPAL CASE ROUTING</span>
       <h1>1999 案件智慧分派</h1>
       <p>以機關權責、歷史案例與 Gemini 分析協助案件準確分流。</p>
+      <div class="system-badges">
+        <span><i class="online-dot"></i>系統服務正常</span>
+        <span>{{ stats()?.apiMode || '載入分派引擎中' }}</span>
+      </div>
     </div>
     <label class="organization-picker">
       <span>目前使用機關</span>
@@ -18,22 +22,45 @@
   </header>
 
   <nav class="tabs" aria-label="主要功能">
-    <button [class.active]="activeTab() === 'intake'" (click)="selectTab('intake')">新案分派</button>
-    <button [class.active]="activeTab() === 'cases'" (click)="selectTab('cases')">案件管理</button>
-    <button [class.active]="activeTab() === 'departments'" (click)="selectTab('departments')">責任局處</button>
-    <button [class.active]="activeTab() === 'references'" (click)="selectTab('references')">參考案例</button>
-    <button [class.active]="activeTab() === 'organizations'" (click)="selectTab('organizations')">使用機關</button>
+    <button type="button" [class.active]="activeTab() === 'intake'" (click)="selectTab('intake')"><span>＋</span>新案分派</button>
+    <button type="button" [class.active]="activeTab() === 'cases'" (click)="selectTab('cases')"><span>{{ cases().length }}</span>案件管理</button>
+    <button type="button" [class.active]="activeTab() === 'departments'" (click)="selectTab('departments')"><span>{{ departments().length }}</span>責任局處</button>
+    <button type="button" [class.active]="activeTab() === 'references'" (click)="selectTab('references')"><span>{{ referenceCases().length }}</span>參考案例</button>
+    <button type="button" [class.active]="activeTab() === 'organizations'" (click)="selectTab('organizations')"><span>{{ organizations().length }}</span>使用機關</button>
   </nav>
 
   <main>
     @if (message()) {
-      <div class="notice">{{ message() }}</div>
+      <div class="notice" [class.success]="noticeKind() === 'success'" [class.error]="noticeKind() === 'error'" role="status">
+        <span>{{ noticeKind() === 'success' ? '✓' : noticeKind() === 'error' ? '!' : 'i' }}</span>
+        <p>{{ message() }}</p>
+        <button type="button" aria-label="關閉通知" (click)="clearMessage()">×</button>
+      </div>
     }
     @if (loading()) {
-      <div class="loading">資料載入中…</div>
+      <div class="loading"><span></span>資料載入中…</div>
     }
 
     @if (activeTab() === 'intake') {
+      <section class="context-bar">
+        <div>
+          <small>目前作業機關</small>
+          <strong>{{ selectedOrganization()?.name || '尚未選擇機關' }}</strong>
+        </div>
+        <div>
+          <small>自動分派門檻</small>
+          <strong>{{ (selectedOrganization()?.assignmentThreshold ?? 0) | percent:'1.0-0' }}</strong>
+        </div>
+        <div>
+          <small>啟用責任局處</small>
+          <strong>{{ activeDepartments().length }}</strong>
+        </div>
+        <div class="quick-actions">
+          <span>快速帶入測試案例</span>
+          <button type="button" (click)="fillSampleCase('road')">道路坑洞</button>
+          <button type="button" (click)="fillSampleCase('environment')">環境髒亂</button>
+        </div>
+      </section>
       <section class="two-column">
         <form class="card" [formGroup]="caseForm" (ngSubmit)="submitCase()">
           <div class="section-heading">
@@ -51,9 +78,20 @@
             <label>聯絡電話<input formControlName="citizenPhone"></label>
           </div>
           <label>發生地點<input formControlName="location" placeholder="行政區、道路或明確位置"></label>
-          <label>案件標題<input formControlName="title" placeholder="例如：道路坑洞影響行車"></label>
-          <label>案件內容<textarea formControlName="description" rows="6" placeholder="請描述事件、時間、地點與影響"></textarea></label>
-          <button class="primary" type="submit" [disabled]="saving()">比對並自動分派</button>
+          <label [class.invalid]="fieldInvalid('case', 'title')">案件標題
+            <input formControlName="title" placeholder="例如：道路坑洞影響行車">
+            @if (fieldInvalid('case', 'title')) { <small class="field-error">請輸入至少 3 個字的案件標題。</small> }
+          </label>
+          <label [class.invalid]="fieldInvalid('case', 'description')">案件內容
+            <textarea formControlName="description" rows="6" placeholder="請描述事件、時間、地點與影響"></textarea>
+            @if (fieldInvalid('case', 'description')) { <small class="field-error">請輸入至少 6 個字的案件內容。</small> }
+          </label>
+          <div class="submit-row">
+            <small>送出後會立即比對參考案例與局處權責。</small>
+            <button class="primary" type="submit" [disabled]="saving() || activeDepartments().length === 0">
+              @if (saving()) { <span class="button-spinner"></span>分析中… } @else { 比對並自動分派 → }
+            </button>
+          </div>
         </form>
 
         <article class="card result-card" [class.success]="dispatchResult()?.assignmentMode === 'auto'">
@@ -77,8 +115,13 @@
                 </div>
               }
             </div>
+            <button class="secondary result-action" type="button" (click)="viewDispatchResult()">前往案件管理查看完整紀錄 →</button>
           } @else {
-            <div class="empty-state">尚未送出案件。系統會顯示責任局處、信心分數、候選結果與判定理由。</div>
+            <div class="empty-state interactive-empty">
+              <span>◎</span>
+              <h3>等待案件內容</h3>
+              <p>可使用上方測試案例快速帶入資料，送出後這裡會顯示責任局處、信心分數與判定理由。</p>
+            </div>
           }
         </article>
       </section>
@@ -98,6 +141,16 @@
               <h2>案件清單</h2>
               <input placeholder="搜尋案件" (input)="search.set($any($event.target).value)">
             </div>
+            <div class="filter-chips" aria-label="案件狀態篩選">
+              @for (filter of ['全部', '待處理', '處理中', '已結案', '人工覆核']; track filter) {
+                <button
+                  type="button"
+                  [class.active]="caseStatusFilter() === filter"
+                  (click)="caseStatusFilter.set($any(filter))">
+                  {{ filter }}
+                </button>
+              }
+            </div>
             <div class="case-list">
               @for (caseItem of filteredCases(); track caseItem.id) {
                 <button
@@ -105,7 +158,10 @@
                   [class.selected]="selectedCase()?.id === caseItem.id"
                   (click)="selectCase(caseItem)">
                   <span><b>{{ caseItem.title }}</b><small>{{ caseItem.externalId || caseItem.id }}</small></span>
-                  <span><b>{{ departmentName(caseItem.departmentId) }}</b><small>{{ caseItem.confidence | percent:'1.0-0' }}</small></span>
+                  <span>
+                    <b>{{ departmentName(caseItem.departmentId) }}</b>
+                    <small>{{ caseItem.status }} · {{ caseItem.confidence | percent:'1.0-0' }}</small>
+                  </span>
                 </button>
               } @empty {
                 <div class="empty-state">目前沒有案件。</div>
@@ -133,7 +189,7 @@
                   }
                 </select>
                 <textarea formControlName="reason" rows="2" placeholder="改派理由"></textarea>
-                <button class="danger" type="submit">確認改派</button>
+                <button class="danger" type="submit" [disabled]="saving()">確認改派</button>
               </form>
               <form [formGroup]="statusForm" (ngSubmit)="updateStatus()" class="subform">
                 <h3>處理進度</h3>
@@ -141,7 +197,7 @@
                   <option value="待處理">待處理</option><option value="處理中">處理中</option><option value="已結案">已結案</option>
                 </select>
                 <textarea formControlName="feedback" rows="2" placeholder="處理說明"></textarea>
-                <button class="secondary" type="submit">更新狀態</button>
+                <button class="secondary" type="submit" [disabled]="saving()">更新狀態</button>
               </form>
               <div class="timeline">
                 <h3>案件軌跡</h3>
@@ -159,13 +215,16 @@
       <section class="management-layout">
         <form class="card sticky-form" [formGroup]="departmentForm" (ngSubmit)="saveDepartment()">
           <div class="section-heading"><span class="step">ORG</span><div><h2>{{ departmentForm.controls.id.value ? '編輯' : '建立' }}責任局處</h2><p>維護權責與比對關鍵字。</p></div></div>
-          <div class="form-grid"><label>局處代碼<input formControlName="code"></label><label>局處名稱<input formControlName="name"></label></div>
-          <label>案件分類<input formControlName="category"></label>
-          <label>權責項目<textarea formControlName="responsibilities" rows="3" placeholder="以逗號分隔"></textarea></label>
-          <label>比對關鍵字<textarea formControlName="keywords" rows="3" placeholder="道路，坑洞，路燈"></textarea></label>
+          <div class="form-grid">
+            <label [class.invalid]="fieldInvalid('department', 'code')">局處代碼<input formControlName="code">@if (fieldInvalid('department', 'code')) { <small class="field-error">請輸入局處代碼。</small> }</label>
+            <label [class.invalid]="fieldInvalid('department', 'name')">局處名稱<input formControlName="name">@if (fieldInvalid('department', 'name')) { <small class="field-error">請輸入局處名稱。</small> }</label>
+          </div>
+          <label [class.invalid]="fieldInvalid('department', 'category')">案件分類<input formControlName="category">@if (fieldInvalid('department', 'category')) { <small class="field-error">請輸入案件分類。</small> }</label>
+          <label [class.invalid]="fieldInvalid('department', 'responsibilities')">權責項目<textarea formControlName="responsibilities" rows="3" placeholder="以逗號分隔"></textarea>@if (fieldInvalid('department', 'responsibilities')) { <small class="field-error">至少填寫一項權責。</small> }</label>
+          <label [class.invalid]="fieldInvalid('department', 'keywords')">比對關鍵字<textarea formControlName="keywords" rows="3" placeholder="道路，坑洞，路燈"></textarea>@if (fieldInvalid('department', 'keywords')) { <small class="field-error">至少填寫一個關鍵字。</small> }</label>
           <label>聯絡資訊<input formControlName="contact"></label>
           <label class="checkbox"><input type="checkbox" formControlName="isActive">啟用此局處</label>
-          <div class="button-row"><button class="primary" type="submit">儲存</button><button class="secondary" type="button" (click)="resetDepartmentForm()">清除</button></div>
+          <div class="button-row"><button class="primary" type="submit" [disabled]="saving()">{{ departmentForm.controls.id.value ? '更新局處' : '建立局處' }}</button><button class="secondary" type="button" (click)="resetDepartmentForm()">清除</button></div>
         </form>
         <div class="card">
           <h2>責任局處清單</h2>
@@ -175,7 +234,17 @@
                 <div><span class="code">{{ department.code }}</span><span class="status" [class.review]="!department.isActive">{{ department.isActive ? '啟用' : '停用' }}</span></div>
                 <h3>{{ department.name }}</h3><p>{{ department.category }}</p>
                 <div class="tags">@for (keyword of department.keywords; track keyword) { <span>{{ keyword }}</span> }</div>
-                <div class="button-row"><button class="secondary" (click)="editDepartment(department)">編輯</button><button class="secondary" (click)="toggleDepartment(department)">{{ department.isActive ? '停用' : '啟用' }}</button></div>
+                <button class="text-button" type="button" (click)="toggleDepartmentDetails(department.id)">
+                  {{ expandedDepartmentId() === department.id ? '收合權責' : '查看完整權責' }}
+                </button>
+                @if (expandedDepartmentId() === department.id) {
+                  <div class="department-details">
+                    <strong>權責項目</strong>
+                    <ul>@for (responsibility of department.responsibilities; track responsibility) { <li>{{ responsibility }}</li> }</ul>
+                    <span>聯絡資訊：{{ department.contact || '未設定' }}</span>
+                  </div>
+                }
+                <div class="button-row"><button type="button" class="secondary" (click)="editDepartment(department)">編輯</button><button type="button" class="secondary" [disabled]="saving()" (click)="toggleDepartment(department)">{{ department.isActive ? '停用' : '啟用' }}</button></div>
               </article>
             }
           </div>
@@ -188,11 +257,11 @@
         <div class="two-column">
           <form class="card" [formGroup]="referenceForm" (ngSubmit)="saveReference()">
             <div class="section-heading"><span class="step">+</span><div><h2>新增參考案例</h2><p>建立已確認的案件與責任局處對照。</p></div></div>
-            <label>責任局處<select formControlName="departmentId"><option value="">選擇局處</option>@for (department of activeDepartments(); track department.id) { <option [value]="department.id">{{ department.name }}</option> }</select></label>
+            <label [class.invalid]="fieldInvalid('reference', 'departmentId')">責任局處<select formControlName="departmentId"><option value="">選擇局處</option>@for (department of activeDepartments(); track department.id) { <option [value]="department.id">{{ department.name }}</option> }</select>@if (fieldInvalid('reference', 'departmentId')) { <small class="field-error">請選擇責任局處。</small> }</label>
             <label>原案件編號<input formControlName="externalId"></label>
-            <label>案例標題<input formControlName="title"></label>
-            <label>案例內容<textarea formControlName="description" rows="5"></textarea></label>
-            <button class="primary" type="submit">新增案例</button>
+            <label [class.invalid]="fieldInvalid('reference', 'title')">案例標題<input formControlName="title">@if (fieldInvalid('reference', 'title')) { <small class="field-error">請輸入案例標題。</small> }</label>
+            <label [class.invalid]="fieldInvalid('reference', 'description')">案例內容<textarea formControlName="description" rows="5"></textarea>@if (fieldInvalid('reference', 'description')) { <small class="field-error">請輸入案例內容。</small> }</label>
+            <button class="primary" type="submit" [disabled]="saving()">新增案例</button>
           </form>
           <div class="card upload-card">
             <div class="section-heading"><span class="step">CSV</span><div><h2>批次匯入</h2><p>支援 UTF-8 CSV 與中英文欄位名稱。</p></div></div>
@@ -202,9 +271,18 @@
           </div>
         </div>
         <div class="card table-card">
-          <h2>參考案例（{{ referenceCases().length }}）</h2>
+          <div class="toolbar">
+            <h2>參考案例（{{ filteredReferenceCases().length }}）</h2>
+            <input placeholder="搜尋案例或局處" (input)="referenceSearch.set($any($event.target).value)">
+          </div>
           <table><thead><tr><th>案件編號</th><th>標題</th><th>責任局處</th><th>來源</th></tr></thead>
-            <tbody>@for (reference of referenceCases(); track reference.id) { <tr><td>{{ reference.externalId || '—' }}</td><td>{{ reference.title }}</td><td>{{ referenceDepartmentName(reference) }}</td><td>{{ reference.source }}</td></tr> }</tbody>
+            <tbody>
+              @for (reference of filteredReferenceCases(); track reference.id) {
+                <tr><td>{{ reference.externalId || '—' }}</td><td><b>{{ reference.title }}</b><small>{{ reference.description }}</small></td><td>{{ referenceDepartmentName(reference) }}</td><td><span class="source-badge">{{ reference.source === 'csv' ? 'CSV' : '單筆' }}</span></td></tr>
+              } @empty {
+                <tr><td colspan="4" class="empty-state">找不到符合條件的參考案例。</td></tr>
+              }
+            </tbody>
           </table>
         </div>
       </section>
@@ -214,16 +292,20 @@
       <section class="management-layout">
         <form class="card sticky-form" [formGroup]="organizationForm" (ngSubmit)="saveOrganization()">
           <div class="section-heading"><span class="step">CFG</span><div><h2>{{ organizationForm.controls.id.value ? '編輯' : '建立' }}使用機關</h2><p>設定機關與自動分派門檻。</p></div></div>
-          <label>機關代碼<input formControlName="code"></label><label>機關名稱<input formControlName="name"></label>
+          <label [class.invalid]="fieldInvalid('organization', 'code')">機關代碼<input formControlName="code">@if (fieldInvalid('organization', 'code')) { <small class="field-error">請輸入機關代碼。</small> }</label>
+          <label [class.invalid]="fieldInvalid('organization', 'name')">機關名稱<input formControlName="name">@if (fieldInvalid('organization', 'name')) { <small class="field-error">請輸入機關名稱。</small> }</label>
           <label>自動分派門檻<input type="number" min="0" max="1" step="0.01" formControlName="assignmentThreshold"><small>0.25 表示信心分數達 25% 自動分派。</small></label>
           <label class="checkbox"><input type="checkbox" formControlName="isActive">啟用此機關</label>
-          <button class="primary" type="submit">儲存機關</button>
+          <div class="button-row"><button class="primary" type="submit" [disabled]="saving()">{{ organizationForm.controls.id.value ? '更新機關' : '建立機關' }}</button><button class="secondary" type="button" (click)="resetOrganizationForm()">清除</button></div>
         </form>
         <div class="card">
           <h2>使用機關清單</h2>
           <div class="organization-list">
             @for (organization of organizations(); track organization.id) {
-              <article><div><span class="code">{{ organization.code }}</span><h3>{{ organization.name }}</h3><p>自動分派門檻 {{ organization.assignmentThreshold | percent:'1.0-0' }}</p></div><button class="secondary" (click)="editOrganization(organization)">編輯</button></article>
+              <article [class.inactive]="!organization.isActive">
+                <div><span class="code">{{ organization.code }}</span><h3>{{ organization.name }}</h3><p>自動分派門檻 {{ organization.assignmentThreshold | percent:'1.0-0' }} · {{ organization.isActive ? '啟用中' : '已停用' }}</p></div>
+                <div class="button-row"><button type="button" class="secondary" (click)="editOrganization(organization)">編輯</button><button type="button" class="secondary" [disabled]="saving()" (click)="toggleOrganization(organization)">{{ organization.isActive ? '停用' : '啟用' }}</button></div>
+              </article>
             }
           </div>
         </div>

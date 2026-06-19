@@ -1,0 +1,6 @@
+{
+  "name": "市民陳情案件自動派工系統",
+  "description": "智慧化市民陳情大廳，自動透過 AI 語意判斷案件分類，並快速精準分配給對應之局處負責單位，且整合既有案件調配暨視覺化派工大數據 dashboard。",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

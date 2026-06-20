@@ -13,6 +13,7 @@ import { HttpClient } from '@angular/common/http';
 import { forkJoin } from 'rxjs';
 import {
   Department,
+  HistoricalWorkbookPreview,
   MunicipalCase,
   Organization,
   ReferenceCase,
@@ -44,6 +45,7 @@ export class App implements OnInit {
   readonly selectedOrganizationId = signal('');
   readonly departments = signal<Department[]>([]);
   readonly referenceCases = signal<ReferenceCase[]>([]);
+  readonly referenceTotal = signal(0);
   readonly cases = signal<MunicipalCase[]>([]);
   readonly selectedCase = signal<MunicipalCase | null>(null);
   readonly dispatchResult = signal<MunicipalCase | null>(null);
@@ -52,6 +54,9 @@ export class App implements OnInit {
   readonly caseStatusFilter = signal<CaseStatusFilter>('全部');
   readonly referenceSearch = signal('');
   readonly expandedDepartmentId = signal('');
+  readonly excelFileName = signal('');
+  readonly excelFileBuffer = signal<ArrayBuffer | null>(null);
+  readonly excelPreview = signal<HistoricalWorkbookPreview | null>(null);
 
   readonly selectedOrganization = computed(() =>
     this.organizations().find((organization) =>
@@ -238,7 +243,8 @@ export class App implements OnInit {
         `/api/departments?organizationId=${encodeURIComponent(organizationId)}`,
       ),
       references: this.http.get<ReferenceCase[]>(
-        `/api/reference-cases?organizationId=${encodeURIComponent(organizationId)}`,
+        `/api/reference-cases?organizationId=${encodeURIComponent(organizationId)}&limit=500`,
+        { observe: 'response' },
       ),
       cases: this.http.get<MunicipalCase[]>(
         `/api/cases?organizationId=${encodeURIComponent(organizationId)}`,
@@ -249,7 +255,12 @@ export class App implements OnInit {
     }).subscribe({
       next: (result) => {
         this.departments.set(result.departments);
-        this.referenceCases.set(result.references);
+        this.referenceCases.set(result.references.body ?? []);
+        this.referenceTotal.set(
+          Number(result.references.headers.get('X-Total-Count')) ||
+          result.references.body?.length ||
+          0,
+        );
         this.cases.set(result.cases);
         this.stats.set(result.stats);
         this.selectedCase.set(result.cases[0] ?? null);
@@ -471,6 +482,108 @@ export class App implements OnInit {
         },
       });
     });
+  }
+
+  previewExcel(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file || !this.selectedOrganizationId()) {
+      return;
+    }
+    if (!file.name.toLowerCase().endsWith('.xlsx')) {
+      this.showMessage('請選擇 .xlsx 格式的 Excel 檔案。', 'error');
+      input.value = '';
+      return;
+    }
+    this.saving.set(true);
+    this.excelPreview.set(null);
+    file.arrayBuffer().then((buffer) => {
+      this.http.post<HistoricalWorkbookPreview>(
+        '/api/reference-cases/xlsx/preview',
+        buffer,
+        {
+          params: { organizationId: this.selectedOrganizationId() },
+          headers: {
+            'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          },
+        },
+      ).subscribe({
+        next: (preview) => {
+          this.excelFileName.set(file.name);
+          this.excelFileBuffer.set(buffer);
+          this.excelPreview.set(preview);
+          this.saving.set(false);
+          this.showMessage(
+            `已讀取 ${preview.rawRows.toLocaleString()} 筆流程紀錄，合併為 ${preview.uniqueCases.toLocaleString()} 件案例。`,
+            'success',
+          );
+        },
+        error: (error: { error?: { error?: string } }) => {
+          this.saving.set(false);
+          this.excelFileName.set('');
+          this.excelFileBuffer.set(null);
+          this.showMessage(error.error?.error ?? 'Excel 檔案解析失敗。', 'error');
+          input.value = '';
+        },
+      });
+    }).catch(() => {
+      this.saving.set(false);
+      this.showMessage('無法讀取 Excel 檔案。', 'error');
+    });
+  }
+
+  importExcel(): void {
+    const buffer = this.excelFileBuffer();
+    if (!buffer || !this.selectedOrganizationId()) {
+      this.showMessage('請先選擇並預覽 Excel 檔案。', 'error');
+      return;
+    }
+    this.saving.set(true);
+    this.http.post<{
+      imported: number;
+      duplicateCases: number;
+      skippedRows: number;
+      rawRows: number;
+      duplicateWorkflowRows: number;
+      createdDepartments: string[];
+    }>(
+      '/api/reference-cases/xlsx/import',
+      buffer,
+      {
+        params: { organizationId: this.selectedOrganizationId() },
+        headers: {
+          'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        },
+      },
+    ).subscribe({
+      next: (result) => {
+        this.saving.set(false);
+        this.excelFileName.set('');
+        this.excelFileBuffer.set(null);
+        this.excelPreview.set(null);
+        const departmentText = result.createdDepartments.length
+          ? `，並建立 ${result.createdDepartments.length} 個責任局處`
+          : '';
+        this.showMessage(
+          `已匯入 ${result.imported.toLocaleString()} 件歷史案例${departmentText}；略過 ${result.duplicateCases.toLocaleString()} 件既有案例。`,
+          'success',
+        );
+        this.loadOrganizationData();
+      },
+      error: (error: { error?: { error?: string } }) => {
+        this.saving.set(false);
+        this.showMessage(error.error?.error ?? 'Excel 匯入失敗。', 'error');
+      },
+    });
+  }
+
+  clearExcelSelection(input?: HTMLInputElement): void {
+    this.excelFileName.set('');
+    this.excelFileBuffer.set(null);
+    this.excelPreview.set(null);
+    if (input) {
+      input.value = '';
+    }
   }
 
   submitCase(): void {

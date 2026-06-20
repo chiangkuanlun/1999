@@ -25,7 +25,7 @@
     <button type="button" [class.active]="activeTab() === 'intake'" (click)="selectTab('intake')"><span>＋</span>新案分派</button>
     <button type="button" [class.active]="activeTab() === 'cases'" (click)="selectTab('cases')"><span>{{ cases().length }}</span>案件管理</button>
     <button type="button" [class.active]="activeTab() === 'departments'" (click)="selectTab('departments')"><span>{{ departments().length }}</span>責任局處</button>
-    <button type="button" [class.active]="activeTab() === 'references'" (click)="selectTab('references')"><span>{{ referenceCases().length }}</span>參考案例</button>
+    <button type="button" [class.active]="activeTab() === 'references'" (click)="selectTab('references')"><span>{{ referenceTotal() }}</span>參考案例</button>
     <button type="button" [class.active]="activeTab() === 'organizations'" (click)="selectTab('organizations')"><span>{{ organizations().length }}</span>使用機關</button>
   </nav>
 
@@ -264,23 +264,90 @@
             <button class="primary" type="submit" [disabled]="saving()">新增案例</button>
           </form>
           <div class="card upload-card">
-            <div class="section-heading"><span class="step">CSV</span><div><h2>批次匯入</h2><p>支援 UTF-8 CSV 與中英文欄位名稱。</p></div></div>
-            <p>必要欄位：<code>department_code</code>、<code>title</code>、<code>description</code>；選填 <code>case_no</code>。</p>
-            <p><a href="/reference-cases-template.csv" download>下載 CSV 匯入範本</a></p>
-            <label class="file-input">選擇 CSV<input type="file" accept=".csv,text/csv" (change)="importCsv($event)"></label>
+            <div class="section-heading">
+              <span class="step">XLSX</span>
+              <div><h2>歷史案件 Excel 匯入</h2><p>支援 1999 案件流程匯出格式，先預覽、確認後才寫入。</p></div>
+            </div>
+            <div class="mapping-grid">
+              <span><b>案件識別</b>案件編號</span>
+              <span><b>比對內容</b>案由、內容</span>
+              <span><b>責任判定</b>案件狀態、交辦單位、執行單位</span>
+              <span><b>補充欄位</b>日期、處理天數、地址、案件類型</span>
+            </div>
+            <p class="upload-note">
+              同一案件的「民眾交辦、分文、移文、回覆」會自動合併；優先採用回覆紀錄的交辦單位作為最終責任局處。
+            </p>
+            <label class="file-input" [class.has-file]="excelFileName()">
+              <span>{{ excelFileName() || '選擇 1999 歷史案件 Excel' }}</span>
+              <small>僅支援 .xlsx，檔案上限 20 MB</small>
+              <input #excelInput type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" (change)="previewExcel($event)">
+            </label>
+            @if (saving() && excelFileName() === '') {
+              <div class="excel-loading"><span class="button-spinner dark"></span>正在解析工作表與合併案件流程…</div>
+            }
+            @if (excelPreview(); as preview) {
+              <div class="excel-preview">
+                <div class="preview-heading">
+                  <div><small>工作表</small><strong>{{ preview.sheetName }}</strong></div>
+                  <button type="button" class="text-button" (click)="clearExcelSelection(excelInput)">重新選擇</button>
+                </div>
+                <div class="preview-metrics">
+                  <div><b>{{ preview.rawRows | number }}</b><span>原始流程列</span></div>
+                  <div><b>{{ preview.uniqueCases | number }}</b><span>合併後案件</span></div>
+                  <div><b>{{ preview.duplicateWorkflowRows | number }}</b><span>重複流程列</span></div>
+                  <div><b>{{ preview.newDepartmentNames.length }}</b><span>將新增局處</span></div>
+                </div>
+                @if (preview.newDepartmentNames.length) {
+                  <div class="new-departments">
+                    <strong>將自動建立責任局處</strong>
+                    <div class="tags">
+                      @for (department of preview.newDepartmentNames; track department) { <span>{{ department }}</span> }
+                    </div>
+                  </div>
+                }
+                <div class="preview-samples">
+                  <strong>資料預覽</strong>
+                  @for (sample of preview.sample; track sample.externalId) {
+                    <div>
+                      <span><b>{{ sample.externalId }}</b>{{ sample.title }}</span>
+                      <span>{{ sample.departmentName }} · {{ sample.caseType }}</span>
+                    </div>
+                  }
+                </div>
+                <button class="primary import-button" type="button" [disabled]="saving()" (click)="importExcel()">
+                  @if (saving()) { <span class="button-spinner"></span>匯入中… } @else { 確認匯入 {{ preview.uniqueCases | number }} 件案例 }
+                </button>
+              </div>
+            }
+            <details class="legacy-import">
+              <summary>使用舊版 4 欄 CSV 匯入</summary>
+              <p>必要欄位：<code>department_code</code>、<code>title</code>、<code>description</code>；選填 <code>case_no</code>。</p>
+              <p><a href="/reference-cases-template.csv" download>下載 CSV 匯入範本</a></p>
+              <label class="file-input compact">選擇 CSV<input type="file" accept=".csv,text/csv" (change)="importCsv($event)"></label>
+            </details>
           </div>
         </div>
         <div class="card table-card">
           <div class="toolbar">
-            <h2>參考案例（{{ filteredReferenceCases().length }}）</h2>
+            <div>
+              <h2>參考案例（共 {{ referenceTotal() | number }} 筆）</h2>
+              <small>為維持操作效能，清單顯示最近 {{ referenceCases().length | number }} 筆。</small>
+            </div>
             <input placeholder="搜尋案例或局處" (input)="referenceSearch.set($any($event.target).value)">
           </div>
-          <table><thead><tr><th>案件編號</th><th>標題</th><th>責任局處</th><th>來源</th></tr></thead>
+          <table><thead><tr><th>案件編號</th><th>標題／內容</th><th>案件類型</th><th>責任局處</th><th>地點</th><th>來源</th></tr></thead>
             <tbody>
               @for (reference of filteredReferenceCases(); track reference.id) {
-                <tr><td>{{ reference.externalId || '—' }}</td><td><b>{{ reference.title }}</b><small>{{ reference.description }}</small></td><td>{{ referenceDepartmentName(reference) }}</td><td><span class="source-badge">{{ reference.source === 'csv' ? 'CSV' : '單筆' }}</span></td></tr>
+                <tr>
+                  <td>{{ reference.externalId || '—' }}</td>
+                  <td><b>{{ reference.title }}</b><small>{{ reference.description }}</small></td>
+                  <td>{{ reference.caseType || '—' }}</td>
+                  <td>{{ referenceDepartmentName(reference) }}</td>
+                  <td>{{ reference.location || '—' }}</td>
+                  <td><span class="source-badge">{{ reference.source === 'xlsx' ? 'Excel' : reference.source === 'csv' ? 'CSV' : '單筆' }}</span></td>
+                </tr>
               } @empty {
-                <tr><td colspan="4" class="empty-state">找不到符合條件的參考案例。</td></tr>
+                <tr><td colspan="6" class="empty-state">找不到符合條件的參考案例。</td></tr>
               }
             </tbody>
           </table>

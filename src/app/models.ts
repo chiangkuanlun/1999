@@ -25,8 +25,33 @@ export interface ReferenceCase {
   externalId?: string;
   title: string;
   description: string;
-  source: 'manual' | 'csv';
+  source: 'manual' | 'csv' | 'xlsx';
+  caseType?: string;
+  location?: string;
+  submittedAt?: string;
+  assignedAt?: string;
+  repliedAt?: string;
+  processingDays?: number;
+  originalStatus?: string;
+  sourceSheet?: string;
   createdAt: string;
+}
+
+export interface HistoricalWorkbookPreview {
+  sheetName: string;
+  headers: string[];
+  rawRows: number;
+  uniqueCases: number;
+  duplicateWorkflowRows: number;
+  skippedRows: number;
+  departmentNames: string[];
+  newDepartmentNames: string[];
+  sample: {
+    externalId: string;
+    title: string;
+    departmentName: string;
+    caseType: string;
+  }[];
 }
 
 export interface CandidateScore {
@@ -81,4 +106,3 @@ export interface Stats {
   manualRerouteRate: number;
   apiMode: string;
 }
-

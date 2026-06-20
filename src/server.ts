@@ -16,6 +16,7 @@ import {
 } from './server/models';
 import { routeCase, RoutingResult } from './server/routing';
 import { JsonStore } from './server/store';
+import { parseHistoricalWorkbook } from './server/xlsx-import';
 
 const browserDistFolder = join(import.meta.dirname, '../browser');
 const app = express();
@@ -291,9 +292,15 @@ app.delete('/api/departments/:id', (req, res) => {
 
 app.get('/api/reference-cases', (req, res) => {
   const organizationId = text(req.query['organizationId']);
-  res.json(store.snapshot().referenceCases.filter(
+  const references = store.snapshot().referenceCases.filter(
     (reference) => !organizationId || reference.organizationId === organizationId,
-  ));
+  );
+  const requestedLimit = Number(req.query['limit']);
+  const limit = Number.isFinite(requestedLimit) && requestedLimit > 0
+    ? Math.min(Math.floor(requestedLimit), 1000)
+    : references.length;
+  res.setHeader('X-Total-Count', String(references.length));
+  res.json(references.slice(-limit).reverse());
 });
 
 app.post('/api/reference-cases', (req, res) => {
@@ -356,6 +363,135 @@ app.post('/api/reference-cases/import', (req, res) => {
   });
   store.update((data) => data.referenceCases.push(...references));
   res.status(201).json({ imported: references.length, errors });
+});
+
+const excelUpload = express.raw({
+  type: [
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/octet-stream',
+  ],
+  limit: '20mb',
+});
+
+app.post('/api/reference-cases/xlsx/preview', excelUpload, async (req, res) => {
+  const organizationId = text(req.query['organizationId']);
+  requireOrganization(organizationId);
+  if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+    res.status(400).json({ error: '請選擇有效的 .xlsx 檔案' });
+    return;
+  }
+  const parsed = await parseHistoricalWorkbook(req.body);
+  const existingDepartments = store.snapshot().departments
+    .filter((department) => department.organizationId === organizationId)
+    .map((department) => department.name);
+  const departmentNames = [...new Set(parsed.references.map((item) => item.departmentName))];
+  res.json({
+    sheetName: parsed.sheetName,
+    headers: parsed.headers,
+    rawRows: parsed.rawRows,
+    uniqueCases: parsed.uniqueCases,
+    duplicateWorkflowRows: parsed.duplicateWorkflowRows,
+    skippedRows: parsed.skipped.length,
+    departmentNames,
+    newDepartmentNames: departmentNames.filter((name) => !existingDepartments.includes(name)),
+    sample: parsed.references.slice(0, 5),
+  });
+});
+
+app.post('/api/reference-cases/xlsx/import', excelUpload, async (req, res) => {
+  const organizationId = text(req.query['organizationId']);
+  requireOrganization(organizationId);
+  if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+    res.status(400).json({ error: '請選擇有效的 .xlsx 檔案' });
+    return;
+  }
+  const parsed = await parseHistoricalWorkbook(req.body);
+  const timestamp = new Date().toISOString();
+  const snapshot = store.snapshot();
+  const existingExternalIds = new Set(snapshot.referenceCases
+    .filter((reference) => reference.organizationId === organizationId)
+    .map((reference) => reference.externalId)
+    .filter(Boolean));
+  const departmentByName = new Map(snapshot.departments
+    .filter((department) => department.organizationId === organizationId)
+    .map((department) => [department.name, department]));
+  const createdDepartments: Department[] = [];
+  const references: ReferenceCase[] = [];
+  let duplicateCases = 0;
+
+  for (const item of parsed.references) {
+    if (existingExternalIds.has(item.externalId)) {
+      duplicateCases += 1;
+      continue;
+    }
+    let department = departmentByName.get(item.departmentName);
+    if (!department) {
+      const sequence = snapshot.departments.length + createdDepartments.length + 1;
+      department = {
+        id: id('dept'),
+        organizationId,
+        code: `XLSX${String(sequence).padStart(3, '0')}`,
+        name: item.departmentName,
+        category: item.caseType || '歷史案例匯入',
+        responsibilities: [item.caseType || '歷史案例'],
+        keywords: item.caseType
+          .split(/[、，,（）()\s]+/)
+          .map((keyword) => keyword.trim())
+          .filter(Boolean),
+        contact: '',
+        isActive: true,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      };
+      createdDepartments.push(department);
+      departmentByName.set(department.name, department);
+    } else {
+      if (item.caseType && !department.responsibilities.includes(item.caseType)) {
+        department.responsibilities.push(item.caseType);
+      }
+    }
+    references.push({
+      id: id('ref'),
+      organizationId,
+      departmentId: department.id,
+      externalId: item.externalId,
+      title: item.title,
+      description: item.description,
+      source: 'xlsx',
+      caseType: item.caseType,
+      ...(item.location ? { location: item.location } : {}),
+      ...(item.submittedAt ? { submittedAt: item.submittedAt } : {}),
+      ...(item.assignedAt ? { assignedAt: item.assignedAt } : {}),
+      ...(item.repliedAt ? { repliedAt: item.repliedAt } : {}),
+      ...(item.processingDays !== undefined
+        ? { processingDays: item.processingDays }
+        : {}),
+      originalStatus: item.originalStatus,
+      sourceSheet: parsed.sheetName,
+      createdAt: timestamp,
+    });
+    existingExternalIds.add(item.externalId);
+  }
+
+  store.update((data) => {
+    data.departments.push(...createdDepartments);
+    for (const department of departmentByName.values()) {
+      const target = data.departments.find((item) => item.id === department.id);
+      if (target && !createdDepartments.some((created) => created.id === target.id)) {
+        target.responsibilities = [...new Set(department.responsibilities)];
+        target.updatedAt = timestamp;
+      }
+    }
+    data.referenceCases.push(...references);
+  });
+  res.status(201).json({
+    imported: references.length,
+    duplicateCases,
+    skippedRows: parsed.skipped.length,
+    rawRows: parsed.rawRows,
+    duplicateWorkflowRows: parsed.duplicateWorkflowRows,
+    createdDepartments: createdDepartments.map((department) => department.name),
+  });
 });
 
 app.get('/api/cases', (req, res) => {

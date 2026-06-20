@@ -29,7 +29,15 @@ export interface ReferenceCase {
   externalId?: string;
   title: string;
   description: string;
-  source: 'manual' | 'csv';
+  source: 'manual' | 'csv' | 'xlsx';
+  caseType?: string;
+  location?: string;
+  submittedAt?: string;
+  assignedAt?: string;
+  repliedAt?: string;
+  processingDays?: number;
+  originalStatus?: string;
+  sourceSheet?: string;
   createdAt: string;
 }
 
@@ -83,4 +91,3 @@ export interface AppData {
   referenceCases: ReferenceCase[];
   cases: MunicipalCase[];
 }
-

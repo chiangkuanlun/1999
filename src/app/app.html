@@ -1,966 +1,393 @@
-<!-- Main Application Container -->
-<div class="min-h-screen bg-slate-50 flex flex-col antialiased font-sans">
-  
-  <!-- Municipal Navigation Header Bar -->
-  <header class="bg-white border-b-2 border-slate-900 sticky top-0 z-40">
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5 flex flex-col md:flex-row items-center justify-between gap-4">
-      
-      <!-- Styled Logo & Branding -->
-      <div class="flex items-center gap-3">
-        <div class="w-10 h-10 bg-indigo-600 rounded-lg flex items-center justify-center text-white font-black text-xl border-2 border-slate-900">
-          <mat-icon class="text-xl">gavel</mat-icon>
-        </div>
-        <div>
-          <div class="flex items-center gap-2">
-            <span class="text-[9px] font-black px-2 py-0.5 rounded-none bg-indigo-100 text-indigo-900 border border-indigo-200 tracking-widest uppercase">市政 AI 大數據版</span>
-            <span class="text-xs font-mono text-slate-400 font-bold">v2.4</span>
-          </div>
-          <h1 class="text-xl font-extrabold text-slate-900 tracking-tight uppercase">市民陳情案件自動智慧派遣便民平台</h1>
-        </div>
+<div class="app-shell">
+  <header class="topbar">
+    <div>
+      <span class="kicker">MUNICIPAL CASE ROUTING</span>
+      <h1>1999 案件智慧分派</h1>
+      <p>以機關權責、歷史案例與 Gemini 分析協助案件準確分流。</p>
+      <div class="system-badges">
+        <span><i class="online-dot"></i>系統服務正常</span>
+        <span [class.engine-warning]="stats() && !stats()?.llmConfigured">
+          {{ stats()?.apiMode || '載入分派引擎中' }}
+        </span>
       </div>
-
-      <!-- Main Navigation Tabs -->
-      <nav class="flex items-center bg-slate-100 border-2 border-slate-900 p-1 rounded-none">
-        <button 
-          id="btn-tab-citizen"
-          type="button"
-          (click)="selectTab('citizen')"
-          [class.bg-slate-900]="activeTab() === 'citizen'"
-          [class.text-white]="activeTab() === 'citizen'"
-          [class.text-slate-600]="activeTab() !== 'citizen'"
-          [class.hover:bg-slate-200]="activeTab() !== 'citizen'"
-          class="flex items-center gap-2 px-4 py-2 text-xs font-black rounded-none transition-all cursor-pointer uppercase tracking-wider">
-          <mat-icon class="text-sm">edit_note</mat-icon>
-          <span>民眾線上陳情</span>
-        </button>
-        <button 
-          id="btn-tab-admin"
-          type="button"
-          (click)="selectTab('admin')"
-          [class.bg-slate-900]="activeTab() === 'admin'"
-          [class.text-white]="activeTab() === 'admin'"
-          [class.text-slate-600]="activeTab() !== 'admin'"
-          [class.hover:bg-slate-200]="activeTab() !== 'admin'"
-          class="flex items-center gap-2 px-4 py-2 text-xs font-black rounded-none transition-all cursor-pointer uppercase tracking-wider relative">
-          <mat-icon class="text-sm">dashboard</mat-icon>
-          <span>分派指揮調度台</span>
-          @if (cases().length > 0) {
-            <span class="ml-1 px-1.5 py-0.2 text-[9px] bg-red-600 text-white rounded-none font-mono font-black border border-slate-900">
-              {{ cases().length }}
-            </span>
-          }
-        </button>
-        <button 
-          id="btn-tab-rules"
-          type="button"
-          (click)="selectTab('rules')"
-          [class.bg-slate-900]="activeTab() === 'rules'"
-          [class.text-white]="activeTab() === 'rules'"
-          [class.text-slate-600]="activeTab() !== 'rules'"
-          [class.hover:bg-slate-200]="activeTab() !== 'rules'"
-          class="flex items-center gap-2 px-4 py-2 text-xs font-black rounded-none transition-all cursor-pointer uppercase tracking-wider">
-          <mat-icon class="text-sm">hub</mat-icon>
-          <span>權責範疇總覽</span>
-        </button>
-      </nav>
-
     </div>
+    <label class="organization-picker">
+      <span>目前使用機關</span>
+      <select
+        [value]="selectedOrganizationId()"
+        (change)="changeOrganization($any($event.target).value)">
+        @for (organization of organizations(); track organization.id) {
+          <option [value]="organization.id">{{ organization.name }}</option>
+        }
+      </select>
+    </label>
   </header>
 
-  <!-- Main Content Stage -->
-  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
+  <nav class="tabs" aria-label="主要功能">
+    <button type="button" [class.active]="activeTab() === 'intake'" (click)="selectTab('intake')"><span>＋</span>新案分派</button>
+    <button type="button" [class.active]="activeTab() === 'cases'" (click)="selectTab('cases')"><span>{{ cases().length }}</span>案件管理</button>
+    <button type="button" [class.active]="activeTab() === 'departments'" (click)="selectTab('departments')"><span>{{ departments().length }}</span>責任局處</button>
+    <button type="button" [class.active]="activeTab() === 'references'" (click)="selectTab('references')"><span>{{ referenceTotal() }}</span>參考案例</button>
+    <button type="button" [class.active]="activeTab() === 'organizations'" (click)="selectTab('organizations')"><span>{{ organizations().length }}</span>使用機關</button>
+  </nav>
 
-    <!-- Loading BackDrop -->
-    @if (isLoading()) {
-      <div id="loader" class="flex flex-col items-center justify-center py-24 bg-white rounded-none border-2 border-slate-900 animate-fade-in shadow-none">
-        <div class="w-12 h-12 border-4 border-slate-250 border-t-indigo-600 rounded-none animate-spin"></div>
-        <span class="mt-4 text-slate-900 font-extrabold tracking-wider uppercase text-sm">刻正自雲端資料庫載入市政調度數據，請稍後...</span>
+  <main>
+    @if (message()) {
+      <div class="notice" [class.success]="noticeKind() === 'success'" [class.error]="noticeKind() === 'error'" role="status">
+        <span>{{ noticeKind() === 'success' ? '✓' : noticeKind() === 'error' ? '!' : 'i' }}</span>
+        <p>{{ message() }}</p>
+        <button type="button" aria-label="關閉通知" (click)="clearMessage()">×</button>
       </div>
-    } @else {
-
-      <!-- TAB 1: Citizens' Petition filing -->
-      @if (activeTab() === 'citizen') {
-        <div id="view-citizen" class="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start animate-fade-in">
-          
-          <!-- Citizens Filing Form Column -->
-          <div class="lg:col-span-7 bg-white rounded-none border-2 border-slate-900 p-6 sm:p-8">
-            <div class="border-b-2 border-slate-900 pb-4 mb-6">
-              <h2 class="text-2xl font-black text-slate-900 tracking-tight uppercase italic flex items-center gap-2">
-                <mat-icon class="text-indigo-600">rate_review</mat-icon>
-                <span>建立新陳情案件 <span class="text-slate-400 font-normal">ONLINE FORM</span></span>
-              </h2>
-              <p class="text-xs text-slate-500 mt-2 font-bold leading-relaxed">
-                請詳實填寫您希望市府協助改善的項目。送出後 AI 引擎會即時判讀文意，自動完成權責分派，並產生稽核歷程。
-              </p>
-            </div>
-
-            <!-- Demo Speed Quick Shortcuts -->
-            <div class="mb-6 p-4 bg-indigo-50 border-2 border-slate-900 rounded-none">
-              <div class="flex items-center gap-1.5 text-xs font-black text-slate-900 mb-3 uppercase tracking-wider">
-                <mat-icon class="text-xs font-black text-indigo-600">bolt</mat-icon>
-                <span>系統評測展示快捷鍵（點擊自動填寫體驗大模型分派機制）:</span>
-              </div>
-              <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <button 
-                  id="btn-demo-light"
-                  type="button" 
-                  (click)="autofillDemoCase(' streetlight')"
-                  class="text-xs px-3 py-2 bg-white border-2 border-slate-950 text-slate-900 font-bold rounded-none hover:bg-slate-900 hover:text-white active:translate-x-[1px] active:translate-y-[1px] transition-all cursor-pointer text-left flex items-center gap-1">
-                  💡 <span>內湖路燈故障 (工務局)</span>
-                </button>
-                <button 
-                  id="btn-demo-noise"
-                  type="button" 
-                  (click)="autofillDemoCase('noise')"
-                  class="text-xs px-3 py-2 bg-white border-2 border-slate-950 text-slate-900 font-bold rounded-none hover:bg-slate-900 hover:text-white active:translate-x-[1px] active:translate-y-[1px] transition-all cursor-pointer text-left flex items-center gap-1">
-                  🔊 <span>深夜工地噪音 (環保局)</span>
-                </button>
-                <button 
-                  id="btn-demo-food"
-                  type="button" 
-                  (click)="autofillDemoCase('food')"
-                  class="text-xs px-3 py-2 bg-white border-2 border-slate-950 text-slate-900 font-bold rounded-none hover:bg-slate-900 hover:text-white active:translate-x-[1px] active:translate-y-[1px] transition-all cursor-pointer text-left flex items-center gap-1">
-                  🥩 <span>夜市食安疑慮 (衛生局)</span>
-                </button>
-                <button 
-                  id="btn-demo-dogs"
-                  type="button" 
-                  (click)="autofillDemoCase('dogs')"
-                  class="text-xs px-3 py-2 bg-white border-2 border-slate-950 text-slate-900 font-bold rounded-none hover:bg-slate-900 hover:text-white active:translate-x-[1px] active:translate-y-[1px] transition-all cursor-pointer text-left flex items-center gap-1">
-                  🐱 <span>公園動物遺體 (清潔科)</span>
-                </button>
-              </div>
-            </div>
-
-            <!-- Reactive Filing Form -->
-            <form [formGroup]="citizenForm" (ngSubmit)="submitCitizenCase()" class="space-y-5">
-              
-              <!-- Row 1: Filer Details -->
-              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label for="input-citizen-name" class="block text-xs font-black text-slate-700 uppercase tracking-widest mb-2">陳情人姓名</label>
-                  <div class="relative">
-                    <input 
-                      id="input-citizen-name"
-                      type="text" 
-                      formControlName="citizenName"
-                      placeholder="例：林大同先生"
-                      [class.border-red-500]="citizenForm.get('citizenName')?.touched && citizenForm.get('citizenName')?.invalid"
-                      [class.border-slate-900]="!(citizenForm.get('citizenName')?.touched && citizenForm.get('citizenName')?.invalid)"
-                      class="w-full px-3 py-2.5 bg-white border-2 rounded-none focus:outline-none focus:bg-indigo-50/20 focus:border-indigo-600 transition-all text-sm font-bold">
-                    @if (citizenForm.get('citizenName')?.touched && citizenForm.get('citizenName')?.invalid) {
-                      <span class="text-[10px] font-black text-red-650 mt-1 block tracking-wide">▲ 陳情人姓名為必填。</span>
-                    }
-                  </div>
-                </div>
-
-                <div>
-                  <label for="input-citizen-phone" class="block text-xs font-black text-slate-700 uppercase tracking-widest mb-2">聯絡話號</label>
-                  <div class="relative">
-                    <input 
-                      id="input-citizen-phone"
-                      type="text" 
-                      formControlName="citizenPhone"
-                      placeholder="例：0912345678"
-                      [class.border-red-500]="citizenForm.get('citizenPhone')?.touched && citizenForm.get('citizenPhone')?.invalid"
-                      [class.border-slate-900]="!(citizenForm.get('citizenPhone')?.touched && citizenForm.get('citizenPhone')?.invalid)"
-                      class="w-full px-3 py-2.5 bg-white border-2 rounded-none focus:outline-none focus:bg-indigo-50/20 focus:border-indigo-600 transition-all text-sm font-bold">
-                    @if (citizenForm.get('citizenPhone')?.touched && citizenForm.get('citizenPhone')?.invalid) {
-                      <span class="text-[10px] font-black text-red-650 mt-1 block tracking-wide">▲ 請輸入正確聯絡手機或市話。</span>
-                    }
-                  </div>
-                </div>
-              </div>
-
-              <!-- Location Row with GPS Button Hook -->
-              <div>
-                <div class="block text-xs font-black text-slate-700 uppercase tracking-widest mb-2 flex justify-between">
-                  <label for="input-location">發生地址與路段</label>
-                  <button 
-                    id="btn-gps-autofill"
-                    type="button" 
-                    (click)="autofillCurrentLocation()"
-                    class="text-[11px] text-indigo-650 hover:text-indigo-800 hover:underline inline-flex items-center gap-1 font-black cursor-pointer uppercase tracking-widest">
-                    <mat-icon class="text-xs font-bold">my_location</mat-icon>
-                    <span>模擬 GPS 地理定位</span>
-                  </button>
-                </div>
-                <div class="relative">
-                  <input 
-                    id="input-location"
-                    type="text" 
-                    formControlName="location"
-                    placeholder="例如：臺北市大安區新生南路二段 1 號"
-                    [class.border-red-500]="citizenForm.get('location')?.touched && citizenForm.get('location')?.invalid"
-                    [class.border-slate-900]="!(citizenForm.get('location')?.touched && citizenForm.get('location')?.invalid)"
-                    class="w-full px-3 py-2.5 bg-white border-2 rounded-none focus:outline-none focus:bg-indigo-50/20 focus:border-indigo-600 transition-all text-sm font-bold">
-                  @if (citizenForm.get('location')?.touched && citizenForm.get('location')?.invalid) {
-                    <span class="text-[10px] font-black text-red-650 mt-1 block tracking-wide">▲ 發生地點為分析關鍵要素，請確實填寫。</span>
-                  }
-                </div>
-              </div>
-
-              <!-- Urgency Segmented Radio Selection -->
-              <div>
-                <div class="block text-xs font-black text-slate-700 uppercase tracking-widest mb-2 font-display">事件急迫性</div>
-                <div class="grid grid-cols-3 gap-2">
-                  <label [class.border-slate-300]="citizenForm.get('urgency')?.value !== '一般'" [class.bg-white]="citizenForm.get('urgency')?.value !== '一般'" [class.border-slate-900]="citizenForm.get('urgency')?.value === '一般'" [class.bg-slate-100]="citizenForm.get('urgency')?.value === '一般'" class="border-2 px-4 py-2.5 rounded-none flex items-center justify-center gap-2 cursor-pointer transition-all font-black text-xs uppercase tracking-widest text-slate-900">
-                    <input type="radio" value="一般" formControlName="urgency" class="accent-slate-900 hidden">
-                    <span class="w-2 h-2 rounded-none bg-slate-400"></span>
-                    <span>一般案件</span>
-                  </label>
-                  <label [class.border-slate-300]="citizenForm.get('urgency')?.value !== '緊急'" [class.bg-white]="citizenForm.get('urgency')?.value !== '緊急'" [class.border-indigo-600]="citizenForm.get('urgency')?.value === '緊急'" [class.bg-indigo-50/70]="citizenForm.get('urgency')?.value === '緊急'" class="border-2 px-4 py-2.5 rounded-none flex items-center justify-center gap-2 cursor-pointer transition-all font-black text-xs uppercase tracking-widest text-slate-900">
-                    <input type="radio" value="緊急" formControlName="urgency" class="accent-indigo-600 hidden">
-                    <span class="w-2 h-2 rounded-none bg-amber-500"></span>
-                    <span>緊急派工</span>
-                  </label>
-                  <label [class.border-slate-300]="citizenForm.get('urgency')?.value !== '特急'" [class.bg-white]="citizenForm.get('urgency')?.value !== '特急'" [class.border-red-600]="citizenForm.get('urgency')?.value === '特急'" [class.bg-red-50]="citizenForm.get('urgency')?.value === '特急'" class="border-2 px-4 py-2.5 rounded-none flex items-center justify-center gap-2 cursor-pointer transition-all font-black text-xs uppercase tracking-widest text-slate-900">
-                    <input type="radio" value="特急" formControlName="urgency" class="accent-red-600 hidden">
-                    <span class="w-2 h-2 rounded-none bg-rose-500 animate-pulse"></span>
-                    <span>特急事件</span>
-                  </label>
-                </div>
-              </div>
-
-              <!-- Case Title and Content -->
-              <div class="space-y-4 pt-1">
-                <div>
-                  <label for="input-title" class="block text-xs font-black text-slate-700 uppercase tracking-widest mb-2 font-mono">陳情案主旨</label>
-                  <input 
-                    id="input-title"
-                    type="text" 
-                    formControlName="title"
-                    placeholder="例：住宅後巷路面破損破爛、大雨容易積水"
-                    [class.border-red-500]="citizenForm.get('title')?.touched && citizenForm.get('title')?.invalid"
-                    [class.border-slate-900]="!(citizenForm.get('title')?.touched && citizenForm.get('title')?.invalid)"
-                    class="w-full px-3 py-2.5 bg-white border-2 rounded-none focus:outline-none focus:bg-indigo-50/20 focus:border-indigo-600 transition-all text-sm font-bold">
-                  @if (citizenForm.get('title')?.touched && citizenForm.get('title')?.invalid) {
-                    <span class="text-[10px] font-black text-red-650 mt-1 block tracking-wide">▲ 大模型需要陳情簡要，請填寫至少 4 個字的主旨。</span>
-                  }
-                </div>
-
-                <div>
-                  <label for="input-description" class="block text-xs font-black text-slate-700 uppercase tracking-widest mb-2">陳情詳細具體內容</label>
-                  <textarea 
-                    id="input-description"
-                    rows="4" 
-                    formControlName="description"
-                    placeholder="請清楚描述現場狀況、發生時段以及對市民生活的具體影響..."
-                    [class.border-red-500]="citizenForm.get('description')?.touched && citizenForm.get('description')?.invalid"
-                    [class.border-slate-900]="!(citizenForm.get('description')?.touched && citizenForm.get('description')?.invalid)"
-                    class="w-full px-3 py-2.5 bg-white border-2 rounded-none focus:outline-none focus:bg-indigo-50/20 focus:border-indigo-600 transition-all text-sm font-bold"></textarea>
-                  @if (citizenForm.get('description')?.touched && citizenForm.get('description')?.invalid) {
-                    <span class="text-[10px] font-black text-red-650 mt-1 block tracking-wide">▲ 文字長度需大於 10 個字，以便 AI 模型進行高精確度的語意派工。</span>
-                  }
-                </div>
-              </div>
-
-              <!-- Form Submit trigger -->
-              <div class="pt-2">
-                <button 
-                  id="btn-submit-petition"
-                  type="submit" 
-                  [disabled]="isSubmitting() || citizenForm.invalid"
-                  class="w-full py-4 bg-slate-900 hover:bg-slate-850 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white text-xs font-black tracking-widest rounded-none shadow-none active:translate-x-[1px] active:translate-y-[1px] transition-all flex items-center justify-center gap-2 cursor-pointer uppercase border-r-4 border-b-4 border-black">
-                  @if (isSubmitting()) {
-                    <div class="w-4 h-4 border-2 border-white/30 border-t-white rounded-none animate-spin font-black"></div>
-                    <span>AI 大腦運算及匹配自動派遣中...</span>
-                  } @else {
-                    <mat-icon class="text-sm font-black">send</mat-icon>
-                    <span>遞交陳情（啟用大模型自動派工分案）</span>
-                  }
-                </button>
-              </div>
-
-            </form>
-          </div>
-
-          <!-- Interactive AI Result Feedback Column -->
-          <div class="lg:col-span-5 flex flex-col gap-6">
-            
-            @if (dispatchFeedback(); as feedback) {
-              <!-- Animated auto-dispatch certificate report -->
-              <div id="panel-dispatch-report" class="bg-slate-950 text-white rounded-none p-6 sm:p-8 border-2 border-slate-950 relative overflow-hidden flex flex-col gap-5 animate-[bounce-in_0.6s_ease-out]">
-                
-                <!-- Background decoration patterns -->
-                <div class="absolute right-0 top-0 w-32 h-32 bg-indigo-600/10 rounded-none blur-2xl"></div>
-                
-                <div class="relative">
-                  <!-- Header stamp -->
-                  <div class="flex items-center justify-between mb-6">
-                    <span class="text-[9px] font-black text-indigo-400 bg-slate-900 px-3 py-1 rounded-none tracking-widest border border-slate-800 font-mono uppercase">
-                      市民智能派遣單 #{{ feedback.id }}
-                    </span>
-                    <span class="text-indigo-400 flex items-center gap-1.5 text-[10px] font-bold tracking-widest uppercase">
-                      <span class="w-2.5 h-2.5 rounded-none bg-indigo-500 animate-pulse"></span>
-                      <span>自動分案已派達</span>
-                    </span>
-                  </div>
-
-                  <!-- Great classification visual success stamp -->
-                  <div class="flex items-center gap-4 mb-6">
-                    <div class="w-12 h-12 bg-indigo-650 rounded-none flex items-center justify-center text-white text-xl font-bold font-mono border border-indigo-400">
-                      @if (feedback.category === '道路與公用設施') { 💡 }
-                      @else if (feedback.category === '環保與公害檢舉') { 🔊 }
-                      @else if (feedback.category === '環境衛生與垃圾') { 🧹 }
-                      @else if (feedback.category === '交通違規與治安') { 👮 }
-                      @else if (feedback.category === '食品安全與公共衛生') { 🥩 }
-                      @else { 🤝 }
-                    </div>
-                    <div>
-                      <span class="text-[10px] text-indigo-400 block font-black tracking-widest uppercase">本案識別案件類別</span>
-                      <h3 class="text-xl font-black text-white tracking-tight uppercase">{{ feedback.category }}</h3>
-                    </div>
-                  </div>
-
-                  <!-- Matching department details -->
-                  <div class="bg-indigo-950/40 border border-slate-800 rounded-none p-5 mb-6">
-                    <span class="text-[9px] uppercase font-black text-indigo-400 tracking-widest block">指派權責負責機關：</span>
-                    <h4 class="text-base font-black text-white mt-1.5 flex items-center gap-1.5">
-                      <mat-icon class="text-sm text-indigo-400">account_balance</mat-icon>
-                      <span>{{ getDeptName(feedback.departmentId) }}</span>
-                    </h4>
-                    
-                    <div class="flex items-center justify-between mt-3 pt-3 border-t border-slate-800 text-xs text-indigo-350">
-                      <span class="font-bold">分派信心度評等 (AI Confidence):</span>
-                      <strong class="font-mono text-indigo-400 text-sm font-black">
-                        {{ Math.round(feedback.confidence * 100) }}%
-                      </strong>
-                    </div>
-                  </div>
-
-                  <!-- Matching detailed reason -->
-                  <div class="space-y-2 mb-6">
-                    <span class="text-[9px] uppercase font-black text-indigo-400 tracking-widest block">AI 語意判讀核心分析報告：</span>
-                    <p class="text-xs text-slate-300 leading-relaxed font-sans bg-slate-900/60 p-4 rounded-none border border-slate-850 font-medium">
-                      {{ feedback.dispatchReason }}
-                    </p>
-                  </div>
-
-                  <!-- Switch to Admin page handler -->
-                  <button 
-                    id="btn-goto-admin"
-                    type="button"
-                    (click)="selectTab('admin')"
-                    class="w-full py-3 bg-white hover:bg-slate-100 text-slate-950 text-xs font-black tracking-widest rounded-none transition-all outline-none border-t-2 border-l-2 border-slate-200 border-r-4 border-b-4 border-slate-900 flex items-center justify-center gap-1.5 cursor-pointer uppercase">
-                    <span>前往調度中心追蹤本案進度 ➔</span>
-                  </button>
-                </div>
-
-              </div>
-            } @else {
-              <!-- Neutral idle radar placeholder panel -->
-              <div id="panel-idle-placeholder" class="bg-white text-slate-900 rounded-none p-8 border-2 border-slate-900 flex flex-col justify-center items-center text-center py-20 relative overflow-hidden">
-                <div class="absolute right-0 top-0 w-24 h-24 bg-indigo-500/5 rounded-none blur-2xl"></div>
-                
-                <div class="relative flex flex-col items-center">
-                  <!-- Radar spinning effect -->
-                  <div class="relative w-16 h-16 rounded-none border-2 border-slate-900 flex items-center justify-center mb-6">
-                    <div class="absolute inset-0 rounded-none border-2 border-indigo-650/30 animate-pulse"></div>
-                    <mat-icon class="text-slate-900 text-2xl font-black">radar</mat-icon>
-                  </div>
-                  
-                  <h3 class="text-lg font-black tracking-tight text-slate-900 uppercase italic">智慧派遣系統運作中</h3>
-                  <p class="text-xs text-slate-500 max-w-sm leading-relaxed mt-2 font-medium">
-                    在左側填妥市民投件主旨與地址後提交，AI 派遣官將自動解析語意意圖、辨別疑難類別，並精準分派至市府局處，立即嘗試！
-                  </p>
-                </div>
-              </div>
-            }
-
-            <!-- Info Guide Callout -->
-            <div class="bg-white rounded-none border-2 border-slate-900 p-5 shadow-none">
-              <h4 class="text-xs font-black text-slate-900 flex items-center gap-1.5 uppercase tracking-widest mb-3">
-                <mat-icon class="text-xs font-black text-indigo-650">verified_user</mat-icon>
-                <span>市民權利保障機制</span>
-              </h4>
-              <ul class="space-y-2.5 text-xs text-slate-650 font-bold leading-relaxed">
-                <li class="flex items-start gap-1.5">
-                  <span class="text-indigo-600 font-extrabold">•</span>
-                  <span>本平台大模型運算伺服器均布建於安全網域中物理解析。</span>
-                </li>
-                <li class="flex items-start gap-1.5">
-                  <span class="text-indigo-600 font-extrabold">•</span>
-                  <span>若分派不當，市政調度中心隨時具有「人力重新轉派(人工改分)」最高督導級覆核權。</span>
-                </li>
-                <li class="flex items-start gap-1.5">
-                  <span class="text-indigo-600 font-extrabold">•</span>
-                  <span>全案進程及分派依據皆完整建檔於市府稽核歷程日誌中。</span>
-                </li>
-              </ul>
-            </div>
-
-          </div>
-
-        </div>
-      }
-
-      <!-- TAB 2: Dispatch Control Center (Admin view) -->
-      @if (activeTab() === 'admin') {
-        <div id="view-admin" class="space-y-6 animate-fade-in">
-          
-          <!-- High level Stats KPI Grid -->
-          @if (stats(); as st) {
-            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-0 border-2 border-slate-950 bg-white rounded-none">
-              
-              <!-- Total cases card -->
-              <div class="p-6 border-b sm:border-r border-slate-950 flex flex-col justify-between">
-                <div>
-                  <p class="text-[11px] font-black text-indigo-600 uppercase tracking-widest mb-1.5">陳情受理總收件</p>
-                  <p class="text-5xl font-black leading-none tracking-tighter font-mono text-slate-900">{{ st.totalCases }}</p>
-                </div>
-                <p class="text-[11px] text-slate-400 mt-4 font-bold">自動派發安全存檔備查</p>
-              </div>
-
-              <!-- AI Accuracy rate card with intelligent colors -->
-              <div class="p-6 border-b lg:border-b-0 sm:border-r border-slate-950 flex flex-col justify-between">
-                <div>
-                  <p class="text-[11px] font-black text-indigo-600 uppercase tracking-widest mb-1.5">AI 智慧一次性分派率</p>
-                  <p [class.text-indigo-600]="st.accuracyRate >= 80" [class.text-amber-500]="st.accuracyRate < 80" class="text-5xl font-black leading-none tracking-tighter font-mono">
-                    {{ st.accuracyRate }}%
-                  </p>
-                </div>
-                <p class="text-[11px] text-slate-400 mt-4 font-bold">即時監管自動分流比對率</p>
-              </div>
-
-              <!-- Processing backlogs card -->
-              <div class="p-6 border-b lg:border-b-0 sm:border-r border-slate-950 flex flex-col justify-between">
-                <div>
-                  <p class="text-[11px] font-black text-orange-500 uppercase tracking-widest mb-1.5">承辦待處理 / 處理中</p>
-                  <div class="flex items-baseline gap-2 mt-1 leading-none">
-                    <span class="text-5xl font-black tracking-tighter text-rose-650 font-mono">{{ st.statusCounts.pending }}</span>
-                    <span class="text-xs font-bold text-slate-400 uppercase">待</span>
-                    <span class="text-5xl font-black tracking-tighter text-amber-500 font-mono">{{ st.statusCounts.processing }}</span>
-                    <span class="text-xs font-bold text-slate-400 uppercase">中</span>
-                  </div>
-                </div>
-                <p class="text-[11px] text-slate-400 mt-4 font-bold">需指派機關盡快查辦處置</p>
-              </div>
-
-              <!-- Engine status card -->
-              <div class="p-6 flex flex-col justify-between">
-                <div>
-                  <p class="text-[11px] font-black text-indigo-600 uppercase tracking-widest mb-1.5">派遣決策大腦狀態</p>
-                  <p class="text-xl font-black uppercase leading-tight tracking-tight text-slate-900 mt-1">{{ st.apiMode }}</p>
-                </div>
-                <p class="text-[11px] text-slate-400 mt-4 font-bold">Gemini-3.5-Flash 全天候在線</p>
-              </div>
-
-            </div>
-          }
-
-          <!-- Core two-column dashboard splitting cases and details -->
-          <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-            
-            <!-- Left Grid: Master Case Search, Filtering, and List -->
-            <div class="lg:col-span-5 bg-white rounded-none border-2 border-slate-900 p-4 shadow-none flex flex-col gap-4">
-              
-              <!-- Search parameters -->
-              <div class="relative">
-                <input 
-                  id="input-search"
-                  type="text" 
-                  [value]="searchQuery()"
-                  (input)="searchQuery.set($any($event.target).value)"
-                  placeholder="搜尋陳情案名、描述或段落關鍵字..."
-                  class="w-full pl-9 pr-3 py-2.5 bg-white border-2 border-slate-900 rounded-none focus:outline-none focus:bg-indigo-50/20 focus:border-indigo-600 transition-all text-xs font-bold">
-                <mat-icon class="absolute left-3 top-3.5 text-slate-900 text-sm font-black">search</mat-icon>
-              </div>
-
-              <!-- Filter segment tabs by status -->
-              <div class="flex border-2 border-slate-900 bg-slate-100 p-1 rounded-none">
-                <button 
-                  id="tab-filter-all"
-                  (click)="statusFilter.set('ALL')"
-                  [class.bg-slate-900]="statusFilter() === 'ALL'"
-                  [class.text-white]="statusFilter() === 'ALL'"
-                  [class.text-slate-600]="statusFilter() !== 'ALL'"
-                  [class.hover:text-slate-900]="statusFilter() !== 'ALL'"
-                  class="flex-1 py-2 text-xs font-black rounded-none cursor-pointer transition-all uppercase tracking-wider text-center">
-                  全部 ({{ cases().length }})
-                </button>
-                <button 
-                  id="tab-filter-pending"
-                  (click)="statusFilter.set('待處理')"
-                  [class.bg-slate-900]="statusFilter() === '待處理'"
-                  [class.text-white]="statusFilter() === '待處理'"
-                  [class.text-slate-600]="statusFilter() !== '待處理'"
-                  [class.hover:text-slate-900]="statusFilter() !== '待處理'"
-                  class="flex-1 py-1.5 text-xs font-black rounded-none cursor-pointer transition-all uppercase tracking-wider text-center">
-                  待處理
-                  @let pCount = getCountByStatus('待處理');
-                  <span class="ml-0.5 px-1 py-0.2 bg-red-650 text-white rounded-none text-[8px] font-mono border border-slate-950">{{ pCount }}</span>
-                </button>
-                <button 
-                  id="tab-filter-processing"
-                  (click)="statusFilter.set('處理中')"
-                  [class.bg-slate-900]="statusFilter() === '處理中'"
-                  [class.text-white]="statusFilter() === '處理中'"
-                  [class.text-slate-600]="statusFilter() !== '處理中'"
-                  [class.hover:text-slate-900]="statusFilter() !== '處理中'"
-                  class="flex-1 py-1.5 text-xs font-black rounded-none cursor-pointer transition-all uppercase tracking-wider text-center">
-                  處理中
-                  @let prCount = getCountByStatus('處理中');
-                  <span class="ml-0.5 px-1 py-0.2 bg-amber-500 text-white rounded-none text-[8px] font-mono border border-slate-950">{{ prCount }}</span>
-                </button>
-                <button 
-                  id="tab-filter-closed"
-                  (click)="statusFilter.set('已結案')"
-                  [class.bg-slate-900]="statusFilter() === '已結案'"
-                  [class.text-white]="statusFilter() === '已結案'"
-                  [class.text-slate-600]="statusFilter() !== '已結案'"
-                  [class.hover:text-slate-900]="statusFilter() !== '已結案'"
-                  class="flex-1 py-1.5 text-xs font-black rounded-none cursor-pointer transition-all uppercase tracking-wider text-center">
-                  已結案
-                  @let cCount = getCountByStatus('已結案');
-                  <span class="ml-0.5 px-1 py-0.2 bg-indigo-600 text-white rounded-none text-[8px] font-mono border border-slate-950">{{ cCount }}</span>
-                </button>
-              </div>
-
-              <!-- Infinite cases lists -->
-              <div class="space-y-2.5 max-h-[580px] overflow-y-auto pr-1">
-                @for (caseItem of filteredCases(); track caseItem.id) {
-                  <button 
-                    id="card-case-{{ caseItem.id }}"
-                    type="button"
-                    (click)="selectedCase.set(caseItem)"
-                    [class.border-slate-950]="selectedCase()?.id === caseItem.id"
-                    [class.bg-indigo-50/50]="selectedCase()?.id === caseItem.id"
-                    [class.border-slate-200] = "selectedCase()?.id !== caseItem.id"
-                    class="p-4 bg-white border-2 hover:border-slate-455 active:scale-[0.99] transition-all cursor-pointer relative group text-left w-full block rounded-none">
-                    
-                    <!-- Top line: Urgency dot, ID and Timestamp -->
-                    <div class="flex items-center justify-between mb-2">
-                      <div class="flex items-center gap-1.5">
-                        <span class="w-2.5 h-2.5 rounded-none border border-slate-900"
-                              [style.background-color]="caseItem.urgency === '特急' ? '#f43f5e' : (caseItem.urgency === '緊急' ? '#f59e0b' : '#94a3b8')"></span>
-                        <span class="text-[10px] font-mono font-bold text-slate-600">#{{ caseItem.id.split('_')[1] || caseItem.id }}</span>
-                      </div>
-                      <span class="text-[10px] text-slate-400 font-mono font-bold">
-                        {{ caseItem.createdAt.split('T')[0] }}
-                      </span>
-                    </div>
-
-                    <!-- Middle line: Case title -->
-                    <h4 class="text-xs font-black text-slate-900 line-clamp-1 mb-2 group-hover:text-indigo-650 transition uppercase tracking-tight">
-                      {{ caseItem.title }}
-                    </h4>
-
-                    <!-- Badges Row -->
-                    <div class="flex flex-wrap items-center gap-1.5">
-                      <!-- Status badge -->
-                      <span [class.bg-rose-900]="caseItem.status === '待處理'" [class.text-white]="caseItem.status === '待處理'"
-                            [class.bg-amber-500]="caseItem.status === '處理中'" [class.text-white]="caseItem.status === '處理中'"
-                            [class.bg-slate-900]="caseItem.status === '已結案'" [class.text-white]="caseItem.status === '已結案'"
-                            class="px-2 py-0.5 text-[9px] font-black rounded-none uppercase tracking-wider">
-                        {{ caseItem.status }}
-                      </span>
-
-                      <!-- Department badge -->
-                      <span class="px-2 py-0.5 bg-slate-100 border border-slate-300 text-slate-800 text-[9px] rounded-none font-bold max-w-[150px] line-clamp-1">
-                        {{ getDeptName(caseItem.departmentId).split(' (')[0] }}
-                      </span>
-
-                      <!-- Manual re-routed indicator badge -->
-                      @if (caseItem.isManuallyRerouted) {
-                        <span class="px-1.5 py-0.5 bg-violet-600 text-white text-[9px] font-black rounded-none flex items-center gap-0.5 uppercase">
-                          <mat-icon class="text-[10px] w-2.5 h-2.5 font-black">shuffle</mat-icon>
-                          <span>人工改分</span>
-                        </span>
-                      } @else {
-                        <span class="px-1.5 py-0.5 bg-indigo-600 text-white text-[9px] font-black rounded-none flex items-center gap-0.5 uppercase">
-                          <mat-icon class="text-[10px] w-2.5 h-2.5 font-black">gavel</mat-icon>
-                          <span>AI 分派</span>
-                        </span>
-                      }
-                    </div>
-
-                  </button>
-                } @empty {
-                  <div class="text-center py-12 bg-slate-50 border-2 border-dashed border-slate-300 rounded-none">
-                    <mat-icon class="text-slate-400 text-3xl">hourglass_empty</mat-icon>
-                    <span class="text-slate-900 font-black text-xs mt-2 block tracking-widest uppercase">查無任何與條件相符之陳情案件。</span>
-                  </div>
-                }
-              </div>
-
-            </div>
-
-            <!-- Right Grid: Detailed Case Overview and Dispatch Resolving Options -->
-            <div class="lg:col-span-7 space-y-6">
-              
-              @if (selectedCase(); as sc) {
-                <div id="panel-case-detail" class="col-span-1 space-y-6 animate-fade-in">
-                  
-                  <!-- Card Part 1: Core details content -->
-                  <div class="bg-white rounded-none border-2 border-slate-900 p-6 shadow-none flex flex-col gap-4">
-                    
-                    <!-- Header with ID, Status, and date detail -->
-                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b-2 border-slate-900 pb-4">
-                      <div>
-                        <div class="flex items-center gap-2 flex-wrap">
-                          <span class="text-xs font-mono bg-slate-900 text-white px-2.5 py-0.5 rounded-none font-black tracking-wider border border-black uppercase text-[10px]">
-                            案號：{{ sc.id }}
-                          </span>
-                          <span [style.background-color]="sc.urgency === '特急' ? '#ffe4e6' : (sc.urgency === '緊急' ? '#fef3c7' : '#f1f5f9')"
-                                [style.color]="sc.urgency === '特急' ? '#9f1239' : (sc.urgency === '緊急' ? '#92400e' : '#475569')"
-                                [style.border-color]="sc.urgency === '特急' ? '#f43f5e' : (sc.urgency === '緊急' ? '#f59e0b' : '#94a3b8')"
-                                class="text-[9px] font-black px-2.5 py-0.5 rounded-none border flex items-center gap-1 uppercase tracking-widest">
-                            <span class="w-1.5 h-1.5 rounded-none" [style.background-color]="sc.urgency === '特急' ? '#f43f5e' : (sc.urgency === '緊急' ? '#f59e0b' : '#94a3b8')"></span>
-                            <span>{{ sc.urgency || '一般' }}</span>
-                          </span>
-                        </div>
-                        <h3 class="text-xl font-black text-slate-900 mt-3 tracking-tight font-sans">{{ sc.title }}</h3>
-                      </div>
-
-                      <div class="flex items-center gap-2">
-                        <span [class.bg-rose-900]="sc.status === '待處理'" [class.text-white]="sc.status === '待處理'"
-                              [class.bg-amber-500]="sc.status === '處理中'" [class.text-white]="sc.status === '處理中'"
-                              [class.bg-slate-900]="sc.status === '已結案'" [class.text-white]="sc.status === '已結案'"
-                              class="text-xs font-black px-4 py-1.5 rounded-none border border-black tracking-widest uppercase shadow-sm">
-                          {{ sc.status }}
-                        </span>
-                      </div>
-                    </div>
-
-                    <!-- Filer and Location meta info block -->
-                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-100 p-4 rounded-none border-2 border-slate-900 text-xs">
-                      <div class="space-y-1.5">
-                        <span class="text-slate-500 font-black block uppercase tracking-widest text-[9px]">陳情人資訊</span>
-                        <div class="font-bold text-slate-900 flex items-center gap-1.5">
-                          <mat-icon class="text-xs text-slate-800 font-extrabold">person</mat-icon>
-                          <span>{{ sc.citizenName }}</span>
-                          <span class="text-slate-500 font-mono">({{ sc.citizenPhone }})</span>
-                        </div>
-                      </div>
-                      <div class="space-y-1.5">
-                        <span class="text-slate-500 font-black block uppercase tracking-widest text-[9px]">通報地理路段</span>
-                        <div class="font-bold text-slate-900 flex items-center gap-1.5 line-clamp-1" [title]="sc.location">
-                          <mat-icon class="text-xs text-slate-800 font-extrabold">location_on</mat-icon>
-                          <span>{{ sc.location }}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <!-- Core description -->
-                    <div class="space-y-2">
-                      <span class="text-slate-950 font-black tracking-widest text-xs uppercase block">陳情詳細訴求</span>
-                      <p class="text-slate-800 bg-white p-4 rounded-none border-2 border-slate-950 leading-relaxed font-sans text-xs font-bold">
-                        {{ sc.description }}
-                      </p>
-                    </div>
-
-                  </div>
-
-                  <!-- Card Part 2: AI Dispatch Diagnostics Details -->
-                  <div class="bg-slate-950 text-white rounded-none p-6 shadow-none flex flex-col gap-4 border-2 border-slate-900">
-                    <div class="flex items-center justify-between border-b border-slate-800 pb-3">
-                      <span class="text-xs font-black tracking-widest text-indigo-400 uppercase flex items-center gap-1.5">
-                        <mat-icon class="text-sm font-black">psychology</mat-icon>
-                        <span>派遣官大腦決策依據</span>
-                      </span>
-                      <span class="text-[9px] font-mono text-slate-400 uppercase tracking-widest font-black">
-                        AI 推薦：#{{ sc.category }}
-                      </span>
-                    </div>
-
-                    <div class="grid grid-cols-1 sm:grid-cols-12 gap-4 items-center">
-                      <!-- Left Match Department Box -->
-                      <div class="sm:col-span-8 space-y-1.5">
-                        <span class="text-[9px] text-slate-400 block font-black uppercase tracking-widest">自動分配派駐局處</span>
-                        <h4 class="text-base font-black text-white flex items-center gap-1.5">
-                          <mat-icon class="text-xs text-indigo-400 font-black">account_balance</mat-icon>
-                          <span>{{ getDeptName(sc.departmentId) }}</span>
-                        </h4>
-                      </div>
-
-                      <!-- Right Circle confidence meter -->
-                      <div class="sm:col-span-4 flex items-center sm:justify-end gap-3 border-t sm:border-t-0 border-slate-850 pt-3 sm:pt-0">
-                        <div class="text-right">
-                          <span class="text-[9px] text-slate-400 block font-black uppercase tracking-widest">配對度評比</span>
-                          <span class="text-xs font-black font-mono text-indigo-400">{{ Math.round(sc.confidence * 100) }}% 置信</span>
-                        </div>
-                        <div class="w-10 h-10 rounded-none border border-indigo-400 flex items-center justify-center p-1 bg-indigo-950">
-                          <span class="font-mono text-[10px] font-black text-indigo-400">AI</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <!-- Analysis block text -->
-                    <div class="bg-slate-900/60 p-4 rounded-none border border-slate-800">
-                      <span class="text-[9px] text-indigo-400 block font-black mb-1.5 uppercase tracking-widest">自動派遣分析評述：</span>
-                      <p class="text-xs text-slate-300 leading-relaxed font-sans font-medium">
-                        {{ sc.dispatchReason }}
-                      </p>
-                    </div>
-                  </div>
-
-                  <!-- Card Part 3: ADMIN ACTIVE DISPATCH RESOLVERS -->
-                  <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    
-                    <!-- Form block 1: Manual Rerouting panel (最高改分介入) -->
-                    <div class="bg-white rounded-none border-2 border-slate-900 p-5 shadow-none flex flex-col gap-4">
-                      <div>
-                        <h4 class="text-xs font-black text-rose-900 uppercase tracking-widest flex items-center gap-1">
-                          <mat-icon class="text-xs font-black">shuffle</mat-icon>
-                          <span>局處改分／管理員人工轉派</span>
-                        </h4>
-                        <p class="text-[9px] text-slate-500 mt-1 font-bold">
-                          若判定不合適或業務重合，系統調度人員可將此陳情單人工改分。
-                        </p>
-                      </div>
-
-                      <form [formGroup]="rerouteForm" (ngSubmit)="submitReroute()" class="space-y-3 pt-1">
-                        <div>
-                          <label for="select-reroute" class="block text-[9px] font-black text-slate-905 mb-1.5 uppercase tracking-widest">選擇最新承辦局處</label>
-                          <select 
-                            id="select-reroute"
-                            formControlName="targetDepartmentId"
-                            class="w-full px-2.5 py-2.5 bg-white border-2 border-slate-900 rounded-none focus:outline-none focus:border-indigo-600 text-xs font-bold transition duration-200">
-                            <option value="" disabled selected>-- 請選取欲轉派負責局處 --</option>
-                            @for (dept of departments(); track dept.id) {
-                              <option [value]="dept.id">{{ dept.name }}</option>
-                            }
-                          </select>
-                        </div>
-
-                        <div>
-                          <label for="input-reroute-reason" class="block text-[9px] font-black text-slate-905 mb-1.5 uppercase tracking-widest">改派及調度原因</label>
-                          <textarea 
-                            id="input-reroute-reason"
-                            rows="2" 
-                            formControlName="rerouteReason"
-                            placeholder="請填寫重分理由（如：不符合該科室責任、需要工務配合）"
-                            class="w-full px-2.5 py-2.5 bg-white border-2 border-slate-900 rounded-none focus:outline-none focus:border-indigo-600 text-xs font-bold"></textarea>
-                        </div>
-
-                        <button 
-                          id="btn-reroute"
-                          type="submit"
-                          [disabled]="rerouteForm.invalid"
-                          class="w-full py-2.5 bg-red-650 hover:bg-red-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white text-[10px] font-black tracking-widest rounded-none transition-all flex items-center justify-center gap-1 cursor-pointer uppercase border-r-2 border-b-2 border-red-800">
-                          <mat-icon class="text-[11px] w-3 h-3 font-black">shuffle</mat-icon>
-                          <span>執行調度改分 (寫入稽核歷程)</span>
-                        </button>
-                      </form>
-
-                    </div>
-
-                    <!-- Form block 2: Resolved Status update (處理回覆回報) -->
-                    <div class="bg-white rounded-none border-2 border-slate-900 p-5 shadow-none flex flex-col gap-4">
-                      <div>
-                        <h4 class="text-xs font-black text-indigo-900 uppercase tracking-widest flex items-center gap-1">
-                          <mat-icon class="text-xs font-black">task_alt</mat-icon>
-                          <span>承辦局處處置回報跟進</span>
-                        </h4>
-                        <p class="text-[9px] text-slate-500 mt-1 font-bold">
-                          更新此案件之處置狀態（受理或結案時），並撰寫官方公家回覆文字。
-                        </p>
-                      </div>
-
-                      <form [formGroup]="statusForm" (ngSubmit)="submitStatusUpdate()" class="space-y-3 pt-1">
-                        
-                        <div class="grid grid-cols-2 gap-2">
-                          <label [class.border-slate-900]="statusForm.get('newStatus')?.value === '處理中'" [class.bg-indigo-50]="statusForm.get('newStatus')?.value === '處理中'" [class.border-slate-200]="statusForm.get('newStatus')?.value !== '處理中'" class="border-2 p-2.5 rounded-none flex items-center gap-1.5 cursor-pointer justify-center transition-all font-black text-xs uppercase tracking-wider text-slate-900">
-                            <input type="radio" value="處理中" formControlName="newStatus" class="hidden">
-                            <span class="w-1.5 h-1.5 rounded-none bg-amber-500"></span>
-                            <span>處理中</span>
-                          </label>
-                          <label [class.border-slate-900]="statusForm.get('newStatus')?.value === '已結案'" [class.bg-indigo-50]="statusForm.get('newStatus')?.value === '已結案'" [class.border-slate-200]="statusForm.get('newStatus')?.value !== '已結案'" class="border-2 p-2.5 rounded-none flex items-center gap-1.5 cursor-pointer justify-center transition-all font-black text-xs uppercase tracking-wider text-slate-900">
-                            <input type="radio" value="已結案" formControlName="newStatus" class="hidden">
-                            <span class="w-1.5 h-1.5 rounded-none bg-emerald-500"></span>
-                            <span>已結案</span>
-                          </label>
-                        </div>
-
-                        <div>
-                          <label for="input-feedback" class="block text-[9px] font-black text-slate-905 mb-1.5 uppercase tracking-widest">官方具體辦理回覆說明</label>
-                          <textarea 
-                            id="input-feedback"
-                            rows="2" 
-                            formControlName="feedback"
-                            placeholder="例：工程人員更換變壓器與 LED 燈泡，目前皆已恢復照明..."
-                            class="w-full px-2.5 py-2.5 bg-white border-2 border-slate-900 rounded-none focus:outline-none focus:border-indigo-600 text-xs font-bold"></textarea>
-                        </div>
-
-                        <button 
-                          id="btn-update-status"
-                          type="submit"
-                          [disabled]="statusForm.invalid"
-                          class="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white text-[10px] font-black tracking-widest rounded-none transition-all flex items-center justify-center gap-1 cursor-pointer uppercase border-r-2 border-b-2 border-indigo-850">
-                          <mat-icon class="text-[11px] w-3 h-3 font-black">check_circle</mat-icon>
-                          <span>提交處置說明及狀態</span>
-                        </button>
-                      </form>
-
-                    </div>
-
-                  </div>
-
-                  <!-- Card Part 4: Dynamic Trace Timeline auditing logs -->
-                  <div class="bg-white rounded-none border-2 border-slate-900 p-6 shadow-none flex flex-col gap-5">
-                    <span class="text-xs font-black text-slate-900 uppercase tracking-widest flex items-center gap-2">
-                      <mat-icon class="text-slate-900 text-sm font-black">history_toggle_off</mat-icon>
-                      <span>全案進程及分派稽核歷程 (歷程時間軸)</span>
-                    </span>
-
-                    <!-- Timeline Loop visual -->
-                    <div class="relative pl-6 border-l-2 border-slate-900 space-y-6">
-                      @for (log of sc.logs; track log.timestamp) {
-                        <div class="relative animate-fade-in">
-                          <!-- Timeline dot icon - square and neo-brutalist -->
-                          <div class="absolute -left-[31px] top-1.5 w-3.5 h-3.5 border-2 border-slate-900 flex items-center justify-center shadow-none"
-                               [style.background-color]="log.action === '案件結案' || log.action === '已結案' ? '#10b981' : (log.action === '智慧分派' || log.action === '自動分派' ? '#4f46e5' : (log.action === '局處改分' ? '#e11d48' : '#0f172a'))">
-                          </div>
-
-                          <!-- Log element card details -->
-                          <div>
-                            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1 mb-1">
-                              <div class="flex items-center gap-2">
-                                <span class="text-xs font-black text-slate-900 uppercase tracking-wide">{{ log.action }}</span>
-                                <span class="text-[9px] font-black text-slate-700 bg-slate-100 rounded-none border border-slate-350 px-1.5 py-0.2">
-                                  經手權限：{{ log.operator }}
-                                </span>
-                              </div>
-                              <span class="text-[10px] text-slate-400 font-mono font-bold">
-                                {{ log.timestamp | date:'yyyy-MM-dd HH:mm:ss' }}
-                              </span>
-                            </div>
-                            <p class="text-xs text-slate-700 leading-relaxed font-sans font-medium p-3 bg-slate-50 border border-slate-200 rounded-none">
-                              {{ log.details }}
-                            </p>
-                          </div>
-                        </div>
-                      }
-                    </div>
-
-                  </div>
-
-                </div>
-              } @else {
-                <!-- State: Blank placeholder -->
-                <div class="bg-white rounded-none border-2 border-slate-900 p-8 shadow-none text-center py-24 flex flex-col items-center justify-center">
-                  <div class="w-12 h-12 rounded-none bg-slate-50 border-2 border-slate-900 flex items-center justify-center text-slate-800 mb-4 animate-bounce">
-                    <mat-icon class="font-black">view_agenda</mat-icon>
-                  </div>
-                  <h3 class="text-slate-900 font-extrabold text-sm uppercase tracking-wider">請選取案件進行調度分析</h3>
-                  <p class="text-xs text-slate-400 max-w-sm leading-relaxed mt-2 font-medium">
-                    在左邊案件清單中點選任何一筆市民投件紀錄，調度大廳隨即會開啟大數據配對評等、轉調改派工具及稽核痕跡追蹤。
-                  </p>
-                </div>
-              }
-
-            </div>
-
-          </div>
-
-        </div>
-      }
-
-      <!-- TAB 3: Rules and divisions breakdown -->
-      @if (activeTab() === 'rules') {
-        <div id="view-rules" class="space-y-6 animate-fade-in">
-          
-          <!-- Section title -->
-          <div class="text-slate-900">
-            <h2 class="text-2xl font-black text-slate-900 tracking-tight uppercase italic flex items-center gap-2">
-              <mat-icon class="text-indigo-600">domain</mat-icon>
-              <span>市政府局處權責範疇總覽 <span class="text-slate-400 font-normal">CLASSIFICATION INDEX</span></span>
-            </h2>
-            <p class="text-xs text-slate-500 mt-2 font-bold leading-relaxed">
-              以下為既有系統運作中之負責單位及分類規則設定，AI 模型會根據此權責分工範疇進行深度匹配與自動調度分配。
-            </p>
-          </div>
-
-          <!-- Cards division grid -->
-          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            @for (dept of departments(); track dept.id) {
-              <div class="bg-white border-2 border-slate-900 rounded-none p-6 shadow-none flex flex-col justify-between hover:translate-x-[2px] hover:translate-y-[2px] transition duration-200">
-                <div class="space-y-4">
-                  <!-- Logo and Active Load badge -->
-                  <div class="flex items-center justify-between">
-                    <div class="w-10 h-10 rounded-none bg-slate-950 text-white flex items-center justify-center border border-slate-850">
-                      @if (dept.id === 'dp_public_works_road') { <mat-icon>construction</mat-icon> }
-                      @else if (dept.id === 'dp_env_noise') { <mat-icon>volume_up</mat-icon> }
-                      @else if (dept.id === 'dp_env_cleaning') { <mat-icon>delete_outline</mat-icon> }
-                      @else if (dept.id === 'dp_police_traffic') { <mat-icon>local_police</mat-icon> }
-                      @else if (dept.id === 'dp_health_food') { <mat-icon>restaurant</mat-icon> }
-                      @else { <mat-icon>groups</mat-icon> }
-                    </div>
-                    
-                    <span class="text-[9px] font-black font-mono px-2 py-1 rounded-none bg-indigo-50 border border-indigo-200 text-indigo-900 uppercase tracking-widest">
-                      轄下案件數: {{ getDeptActiveCount(dept.id) }} 筆
-                    </span>
-                  </div>
-
-                  <!-- Details meta -->
-                  <div>
-                    <span class="text-[10px] text-indigo-600 font-black block uppercase tracking-widest">{{ dept.category }}</span>
-                    <h3 class="text-lg font-black text-slate-900 mt-1 tracking-tight">{{ dept.name }}</h3>
-                  </div>
-
-                  <!-- Segment list elements in card -->
-                  <div class="space-y-2">
-                    <span class="text-[9px] text-slate-400 font-black tracking-widest block uppercase">核心職掌事項：</span>
-                    <div class="flex flex-wrap gap-1.5">
-                      @for (resp of dept.responsibilities; track resp) {
-                        <span class="px-2 py-1 bg-white text-slate-900 text-[10px] font-bold border-2 border-slate-900 rounded-none tracking-tight">
-                          {{ resp }}
-                        </span>
-                      }
-                    </div>
-                  </div>
-                </div>
-
-                <!-- Footer hotline contact -->
-                <div class="mt-6 pt-4 border-t-2 border-slate-150 flex items-center justify-between text-xs text-slate-500">
-                  <span class="inline-flex items-center gap-1 font-bold">
-                    <mat-icon class="text-xs">phone</mat-icon>
-                    <span>派工聯繫熱線：</span>
-                  </span>
-                  <strong class="font-mono text-slate-900 font-bold tracking-wider">{{ dept.contact }}</strong>
-                </div>
-
-              </div>
-            }
-          </div>
-
-          <!-- Helper FAQ card for guidelines -->
-          <div class="bg-slate-950 text-white rounded-none p-6 sm:p-8 border-2 border-slate-950 flex flex-col gap-4 shadow-none">
-            <div class="grid grid-cols-1 md:grid-cols-12 gap-6 items-center">
-              <div class="md:col-span-8 space-y-3">
-                <h3 class="text-lg font-black tracking-tight text-white uppercase italic flex items-center gap-2">
-                  <mat-icon class="text-indigo-400 font-black">psychology</mat-icon>
-                  <span>大模型自動分案如何確保準確？ <span class="text-slate-500 font-normal">AI SAFETY GUARANTEE</span></span>
-                </h3>
-                <p class="text-xs text-slate-300 leading-relaxed max-w-2xl font-bold">
-                  系統透過後端之 Gemini 3.5-Flash 大語言模型，載入市府各處室核心權責的特徵描述（System Instruction）。其語意比對不只局限於「規則關鍵字」，更能判讀上下文在字裡行間表達之強烈關聯，包含意圖語氣、受害者對象等。若系統遭遇極為模糊的情形、或因網路偶發性異常導致 API 異常，平台備接由工務局先行收審之通案備援機制，確保市政投件 100% 妥適保管。
-                </p>
-              </div>
-              <div class="md:col-span-4 flex md:justify-end">
-                <span class="text-[9px] font-mono border-2 border-slate-800 rounded-none p-4 bg-slate-900 text-slate-300 max-w-xs font-bold leading-relaxed tracking-wider uppercase block">
-                  智慧城市核心技術群：<br/>
-                  - Gemini-3.5-Flash API<br/>
-                  - Angular Signals 狀態機<br/>
-                  - Express REST API proxy
-                </span>
-              </div>
-            </div>
-          </div>
-
-        </div>
-      }
-
+    }
+    @if (loading()) {
+      <div class="loading"><span></span>資料載入中…</div>
+    }
+    @if (stats() && !stats()?.llmConfigured) {
+      <div class="llm-warning" role="alert">
+        <div><strong>LLM 尚未啟用</strong><span>目前只會產生本地候選建議，不會自動分派案件。</span></div>
+        <code>請在 .env.local 設定 GEMINI_API_KEY</code>
+      </div>
     }
 
+    @if (activeTab() === 'intake') {
+      <section class="context-bar">
+        <div>
+          <small>目前作業機關</small>
+          <strong>{{ selectedOrganization()?.name || '尚未選擇機關' }}</strong>
+        </div>
+        <div>
+          <small>自動分派門檻</small>
+          <strong>{{ (selectedOrganization()?.assignmentThreshold ?? 0) | percent:'1.0-0' }}</strong>
+        </div>
+        <div>
+          <small>啟用責任局處</small>
+          <strong>{{ activeDepartments().length }}</strong>
+        </div>
+        <div class="quick-actions">
+          <span>快速帶入測試案例</span>
+          <button type="button" (click)="fillSampleCase('road')">道路坑洞</button>
+          <button type="button" (click)="fillSampleCase('environment')">環境髒亂</button>
+        </div>
+      </section>
+      <section class="two-column">
+        <form class="card" [formGroup]="caseForm" (ngSubmit)="submitCase()">
+          <div class="section-heading">
+            <span class="step">01</span>
+            <div><h2>建立新進案件</h2><p>輸入案件內容後立即進行比對與分派。</p></div>
+          </div>
+          <div class="form-grid">
+            <label>外部案件編號<input formControlName="externalId" placeholder="1999-2026-0001"></label>
+            <label>緊急程度
+              <select formControlName="urgency">
+                <option value="一般">一般</option><option value="中度">中度</option><option value="緊急">緊急</option>
+              </select>
+            </label>
+            <label>陳情人<input formControlName="citizenName"></label>
+            <label>聯絡電話<input formControlName="citizenPhone"></label>
+          </div>
+          <label>發生地點<input formControlName="location" placeholder="行政區、道路或明確位置"></label>
+          <label [class.invalid]="fieldInvalid('case', 'title')">案件標題
+            <input formControlName="title" placeholder="例如：道路坑洞影響行車">
+            @if (fieldInvalid('case', 'title')) { <small class="field-error">請輸入至少 3 個字的案件標題。</small> }
+          </label>
+          <label [class.invalid]="fieldInvalid('case', 'description')">案件內容
+            <textarea formControlName="description" rows="6" placeholder="請描述事件、時間、地點與影響"></textarea>
+            @if (fieldInvalid('case', 'description')) { <small class="field-error">請輸入至少 6 個字的案件內容。</small> }
+          </label>
+          <div class="submit-row">
+            <small>送出後會立即比對參考案例與局處權責。</small>
+            <button class="primary" type="submit" [disabled]="saving() || activeDepartments().length === 0">
+              @if (saving()) { <span class="button-spinner"></span>分析中… } @else { 比對並自動分派 → }
+            </button>
+          </div>
+        </form>
+
+        <article class="card result-card" [class.success]="dispatchResult()?.assignmentMode === 'auto'">
+          <div class="section-heading">
+            <span class="step">AI</span>
+            <div><h2>分派判定</h2><p>{{ stats()?.apiMode || '等待案件送出' }}</p></div>
+          </div>
+          @if (dispatchResult(); as result) {
+            <span class="status" [class.review]="result.assignmentMode === 'manual_review'">
+              {{ result.assignmentMode === 'auto' ? 'LLM 自動分派完成' : result.llmIssue ? 'LLM 未執行' : '需人工覆核' }}
+            </span>
+            <span class="engine-label">
+              判定引擎：{{ result.routingEngine === 'gemini' ? 'Gemini LLM 語意分析' : '本地候選建議' }}
+            </span>
+            <div class="confidence">{{ result.confidence | percent:'1.0-1' }}</div>
+            <h3>{{ departmentName(result.departmentId) }}</h3>
+            <p class="reason">{{ result.dispatchReason }}</p>
+            <div class="candidate-list">
+              <strong>候選責任局處</strong>
+              @for (candidate of result.candidates; track candidate.departmentId) {
+                <div>
+                  <span>{{ candidate.departmentName }}</span>
+                  <b>{{ candidate.score | percent:'1.0-1' }}</b>
+                </div>
+              }
+            </div>
+            <button class="secondary result-action" type="button" (click)="viewDispatchResult()">前往案件管理查看完整紀錄 →</button>
+          } @else {
+            <div class="empty-state interactive-empty">
+              <span>◎</span>
+              <h3>等待案件內容</h3>
+              <p>可使用上方測試案例快速帶入資料，送出後這裡會顯示責任局處、信心分數與判定理由。</p>
+            </div>
+          }
+        </article>
+      </section>
+    }
+
+    @if (activeTab() === 'cases') {
+      <section>
+        <div class="metric-grid">
+          <div class="metric"><span>案件總數</span><b>{{ stats()?.totalCases ?? 0 }}</b></div>
+          <div class="metric"><span>自動分派率</span><b>{{ stats()?.autoAssignmentRate ?? 0 }}%</b></div>
+          <div class="metric"><span>人工改派率</span><b>{{ stats()?.manualRerouteRate ?? 0 }}%</b></div>
+          <div class="metric"><span>待處理</span><b>{{ stats()?.statusCounts?.pending ?? 0 }}</b></div>
+        </div>
+        <div class="case-layout">
+          <div class="card">
+            <div class="toolbar">
+              <h2>案件清單</h2>
+              <input placeholder="搜尋案件" (input)="search.set($any($event.target).value)">
+            </div>
+            <div class="filter-chips" aria-label="案件狀態篩選">
+              @for (filter of ['全部', '待處理', '處理中', '已結案', '人工覆核']; track filter) {
+                <button
+                  type="button"
+                  [class.active]="caseStatusFilter() === filter"
+                  (click)="caseStatusFilter.set($any(filter))">
+                  {{ filter }}
+                </button>
+              }
+            </div>
+            <div class="case-list">
+              @for (caseItem of filteredCases(); track caseItem.id) {
+                <button
+                  class="case-row"
+                  [class.selected]="selectedCase()?.id === caseItem.id"
+                  (click)="selectCase(caseItem)">
+                  <span><b>{{ caseItem.title }}</b><small>{{ caseItem.externalId || caseItem.id }}</small></span>
+                  <span>
+                    <b>{{ departmentName(caseItem.departmentId) }}</b>
+                    <small>{{ caseItem.status }} · {{ caseItem.confidence | percent:'1.0-0' }}</small>
+                  </span>
+                </button>
+              } @empty {
+                <div class="empty-state">目前沒有案件。</div>
+              }
+            </div>
+          </div>
+          @if (selectedCase(); as selected) {
+            <aside class="card case-detail">
+              <span class="status" [class.review]="selected.assignmentMode === 'manual_review'">
+                {{ selected.assignmentMode === 'manual_review' ? '人工覆核' : selected.status }}
+              </span>
+              <h2>{{ selected.title }}</h2>
+              <p>{{ selected.description }}</p>
+              <dl>
+                <div><dt>目前局處</dt><dd>{{ departmentName(selected.departmentId) }}</dd></div>
+                <div><dt>信心分數</dt><dd>{{ selected.confidence | percent:'1.0-1' }}</dd></div>
+                <div><dt>判定理由</dt><dd>{{ selected.dispatchReason }}</dd></div>
+              </dl>
+              <form [formGroup]="rerouteForm" (ngSubmit)="rerouteCase()" class="subform">
+                <h3>人工改派</h3>
+                <select formControlName="departmentId">
+                  <option value="">選擇局處</option>
+                  @for (department of activeDepartments(); track department.id) {
+                    <option [value]="department.id">{{ department.name }}</option>
+                  }
+                </select>
+                <textarea formControlName="reason" rows="2" placeholder="改派理由"></textarea>
+                <button class="danger" type="submit" [disabled]="saving()">確認改派</button>
+              </form>
+              <form [formGroup]="statusForm" (ngSubmit)="updateStatus()" class="subform">
+                <h3>處理進度</h3>
+                <select formControlName="status">
+                  <option value="待處理">待處理</option><option value="處理中">處理中</option><option value="已結案">已結案</option>
+                </select>
+                <textarea formControlName="feedback" rows="2" placeholder="處理說明"></textarea>
+                <button class="secondary" type="submit" [disabled]="saving()">更新狀態</button>
+              </form>
+              <div class="timeline">
+                <h3>案件軌跡</h3>
+                @for (log of selected.logs; track log.timestamp) {
+                  <div><b>{{ log.action }}</b><small>{{ log.timestamp | date:'yyyy-MM-dd HH:mm' }} · {{ log.operator }}</small><p>{{ log.details }}</p></div>
+                }
+              </div>
+            </aside>
+          }
+        </div>
+      </section>
+    }
+
+    @if (activeTab() === 'departments') {
+      <section class="management-layout">
+        <form class="card sticky-form" [formGroup]="departmentForm" (ngSubmit)="saveDepartment()">
+          <div class="section-heading"><span class="step">ORG</span><div><h2>{{ departmentForm.controls.id.value ? '編輯' : '建立' }}責任局處</h2><p>維護權責與比對關鍵字。</p></div></div>
+          <div class="form-grid">
+            <label [class.invalid]="fieldInvalid('department', 'code')">局處代碼<input formControlName="code">@if (fieldInvalid('department', 'code')) { <small class="field-error">請輸入局處代碼。</small> }</label>
+            <label [class.invalid]="fieldInvalid('department', 'name')">局處名稱<input formControlName="name">@if (fieldInvalid('department', 'name')) { <small class="field-error">請輸入局處名稱。</small> }</label>
+          </div>
+          <label [class.invalid]="fieldInvalid('department', 'category')">案件分類<input formControlName="category">@if (fieldInvalid('department', 'category')) { <small class="field-error">請輸入案件分類。</small> }</label>
+          <label [class.invalid]="fieldInvalid('department', 'responsibilities')">權責項目<textarea formControlName="responsibilities" rows="3" placeholder="以逗號分隔"></textarea>@if (fieldInvalid('department', 'responsibilities')) { <small class="field-error">至少填寫一項權責。</small> }</label>
+          <label [class.invalid]="fieldInvalid('department', 'keywords')">比對關鍵字<textarea formControlName="keywords" rows="3" placeholder="道路，坑洞，路燈"></textarea>@if (fieldInvalid('department', 'keywords')) { <small class="field-error">至少填寫一個關鍵字。</small> }</label>
+          <label>聯絡資訊<input formControlName="contact"></label>
+          <label class="checkbox"><input type="checkbox" formControlName="isActive">啟用此局處</label>
+          <div class="button-row"><button class="primary" type="submit" [disabled]="saving()">{{ departmentForm.controls.id.value ? '更新局處' : '建立局處' }}</button><button class="secondary" type="button" (click)="resetDepartmentForm()">清除</button></div>
+        </form>
+        <div class="card">
+          <h2>責任局處清單</h2>
+          <div class="department-grid">
+            @for (department of departments(); track department.id) {
+              <article>
+                <div><span class="code">{{ department.code }}</span><span class="status" [class.review]="!department.isActive">{{ department.isActive ? '啟用' : '停用' }}</span></div>
+                <h3>{{ department.name }}</h3><p>{{ department.category }}</p>
+                <div class="tags">@for (keyword of department.keywords; track keyword) { <span>{{ keyword }}</span> }</div>
+                <button class="text-button" type="button" (click)="toggleDepartmentDetails(department.id)">
+                  {{ expandedDepartmentId() === department.id ? '收合權責' : '查看完整權責' }}
+                </button>
+                @if (expandedDepartmentId() === department.id) {
+                  <div class="department-details">
+                    <strong>權責項目</strong>
+                    <ul>@for (responsibility of department.responsibilities; track responsibility) { <li>{{ responsibility }}</li> }</ul>
+                    <span>聯絡資訊：{{ department.contact || '未設定' }}</span>
+                  </div>
+                }
+                <div class="button-row"><button type="button" class="secondary" (click)="editDepartment(department)">編輯</button><button type="button" class="secondary" [disabled]="saving()" (click)="toggleDepartment(department)">{{ department.isActive ? '停用' : '啟用' }}</button></div>
+              </article>
+            }
+          </div>
+        </div>
+      </section>
+    }
+
+    @if (activeTab() === 'references') {
+      <section>
+        <div class="two-column">
+          <form class="card" [formGroup]="referenceForm" (ngSubmit)="saveReference()">
+            <div class="section-heading"><span class="step">+</span><div><h2>新增參考案例</h2><p>建立已確認的案件與責任局處對照。</p></div></div>
+            <label [class.invalid]="fieldInvalid('reference', 'departmentId')">責任局處<select formControlName="departmentId"><option value="">選擇局處</option>@for (department of activeDepartments(); track department.id) { <option [value]="department.id">{{ department.name }}</option> }</select>@if (fieldInvalid('reference', 'departmentId')) { <small class="field-error">請選擇責任局處。</small> }</label>
+            <label>原案件編號<input formControlName="externalId"></label>
+            <label [class.invalid]="fieldInvalid('reference', 'title')">案例標題<input formControlName="title">@if (fieldInvalid('reference', 'title')) { <small class="field-error">請輸入案例標題。</small> }</label>
+            <label [class.invalid]="fieldInvalid('reference', 'description')">案例內容<textarea formControlName="description" rows="5"></textarea>@if (fieldInvalid('reference', 'description')) { <small class="field-error">請輸入案例內容。</small> }</label>
+            <button class="primary" type="submit" [disabled]="saving()">新增案例</button>
+          </form>
+          <div class="card upload-card">
+            <div class="section-heading">
+              <span class="step">XLSX</span>
+              <div><h2>歷史案件 Excel 匯入</h2><p>支援 1999 案件流程匯出格式，先預覽、確認後才寫入。</p></div>
+            </div>
+            <div class="mapping-grid">
+              <span><b>案件識別</b>案件編號</span>
+              <span><b>比對內容</b>案由、內容</span>
+              <span><b>責任判定</b>案件狀態、交辦單位、執行單位</span>
+              <span><b>補充欄位</b>日期、處理天數、地址、案件類型</span>
+            </div>
+            <p class="upload-note">
+              同一案件的「民眾交辦、分文、移文、回覆」會自動合併；優先採用回覆紀錄的交辦單位作為最終責任局處。
+            </p>
+            <label class="file-input" [class.has-file]="excelFileName()">
+              <span>{{ excelFileName() || '選擇 1999 歷史案件 Excel' }}</span>
+              <small>僅支援 .xlsx，檔案上限 20 MB</small>
+              <input #excelInput type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" (change)="previewExcel($event)">
+            </label>
+            @if (saving() && excelFileName() === '') {
+              <div class="excel-loading"><span class="button-spinner dark"></span>正在解析工作表與合併案件流程…</div>
+            }
+            @if (excelPreview(); as preview) {
+              <div class="excel-preview">
+                <div class="preview-heading">
+                  <div><small>工作表</small><strong>{{ preview.sheetName }}</strong></div>
+                  <button type="button" class="text-button" (click)="clearExcelSelection(excelInput)">重新選擇</button>
+                </div>
+                <div class="preview-metrics">
+                  <div><b>{{ preview.rawRows | number }}</b><span>原始流程列</span></div>
+                  <div><b>{{ preview.uniqueCases | number }}</b><span>合併後案件</span></div>
+                  <div><b>{{ preview.duplicateWorkflowRows | number }}</b><span>重複流程列</span></div>
+                  <div><b>{{ preview.newDepartmentNames.length }}</b><span>將新增局處</span></div>
+                </div>
+                @if (preview.newDepartmentNames.length) {
+                  <div class="new-departments">
+                    <strong>將自動建立責任局處</strong>
+                    <div class="tags">
+                      @for (department of preview.newDepartmentNames; track department) { <span>{{ department }}</span> }
+                    </div>
+                  </div>
+                }
+                <div class="preview-samples">
+                  <strong>資料預覽</strong>
+                  @for (sample of preview.sample; track sample.externalId) {
+                    <div>
+                      <span><b>{{ sample.externalId }}</b>{{ sample.title }}</span>
+                      <span>{{ sample.departmentName }} · {{ sample.caseType }}</span>
+                    </div>
+                  }
+                </div>
+                <button class="primary import-button" type="button" [disabled]="saving()" (click)="importExcel()">
+                  @if (saving()) { <span class="button-spinner"></span>匯入中… } @else { 確認匯入 {{ preview.uniqueCases | number }} 件案例 }
+                </button>
+              </div>
+            }
+            <details class="legacy-import">
+              <summary>使用舊版 4 欄 CSV 匯入</summary>
+              <p>必要欄位：<code>department_code</code>、<code>title</code>、<code>description</code>；選填 <code>case_no</code>。</p>
+              <p><a href="/reference-cases-template.csv" download>下載 CSV 匯入範本</a></p>
+              <label class="file-input compact">選擇 CSV<input type="file" accept=".csv,text/csv" (change)="importCsv($event)"></label>
+            </details>
+          </div>
+        </div>
+        <div class="card table-card">
+          <div class="toolbar">
+            <div>
+              <h2>參考案例（共 {{ referenceTotal() | number }} 筆）</h2>
+              <small>為維持操作效能，清單顯示最近 {{ referenceCases().length | number }} 筆。</small>
+            </div>
+            <input placeholder="搜尋案例或局處" (input)="referenceSearch.set($any($event.target).value)">
+          </div>
+          <table><thead><tr><th>案件編號</th><th>標題／內容</th><th>案件類型</th><th>責任局處</th><th>地點</th><th>來源</th></tr></thead>
+            <tbody>
+              @for (reference of filteredReferenceCases(); track reference.id) {
+                <tr>
+                  <td>{{ reference.externalId || '—' }}</td>
+                  <td><b>{{ reference.title }}</b><small>{{ reference.description }}</small></td>
+                  <td>{{ reference.caseType || '—' }}</td>
+                  <td>{{ referenceDepartmentName(reference) }}</td>
+                  <td>{{ reference.location || '—' }}</td>
+                  <td><span class="source-badge">{{ reference.source === 'xlsx' ? 'Excel' : reference.source === 'csv' ? 'CSV' : '單筆' }}</span></td>
+                </tr>
+              } @empty {
+                <tr><td colspan="6" class="empty-state">找不到符合條件的參考案例。</td></tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </section>
+    }
+
+    @if (activeTab() === 'organizations') {
+      <section class="management-layout">
+        <form class="card sticky-form" [formGroup]="organizationForm" (ngSubmit)="saveOrganization()">
+          <div class="section-heading"><span class="step">CFG</span><div><h2>{{ organizationForm.controls.id.value ? '編輯' : '建立' }}使用機關</h2><p>設定機關與自動分派門檻。</p></div></div>
+          <label [class.invalid]="fieldInvalid('organization', 'code')">機關代碼<input formControlName="code">@if (fieldInvalid('organization', 'code')) { <small class="field-error">請輸入機關代碼。</small> }</label>
+          <label [class.invalid]="fieldInvalid('organization', 'name')">機關名稱<input formControlName="name">@if (fieldInvalid('organization', 'name')) { <small class="field-error">請輸入機關名稱。</small> }</label>
+          <label>自動分派門檻<input type="number" min="0" max="1" step="0.01" formControlName="assignmentThreshold"><small>0.25 表示信心分數達 25% 自動分派。</small></label>
+          <label class="checkbox"><input type="checkbox" formControlName="isActive">啟用此機關</label>
+          <div class="button-row"><button class="primary" type="submit" [disabled]="saving()">{{ organizationForm.controls.id.value ? '更新機關' : '建立機關' }}</button><button class="secondary" type="button" (click)="resetOrganizationForm()">清除</button></div>
+        </form>
+        <div class="card">
+          <h2>使用機關清單</h2>
+          <div class="organization-list">
+            @for (organization of organizations(); track organization.id) {
+              <article [class.inactive]="!organization.isActive">
+                <div><span class="code">{{ organization.code }}</span><h3>{{ organization.name }}</h3><p>自動分派門檻 {{ organization.assignmentThreshold | percent:'1.0-0' }} · {{ organization.isActive ? '啟用中' : '已停用' }}</p></div>
+                <div class="button-row"><button type="button" class="secondary" (click)="editOrganization(organization)">編輯</button><button type="button" class="secondary" [disabled]="saving()" (click)="toggleOrganization(organization)">{{ organization.isActive ? '停用' : '啟用' }}</button></div>
+              </article>
+            }
+          </div>
+        </div>
+      </section>
+    }
   </main>
-
-  <!-- Municipal footer stamp -->
-  <footer class="bg-white border-t-2 border-slate-900 py-6 mt-12 text-center text-xs text-slate-500 font-bold">
-    <div class="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-3 uppercase tracking-widest">
-      <span>市民陳情案件自動派遣派工平台 © 2026 臺北市政府智慧調度派遣中心</span>
-      <span class="font-mono text-[9px] font-black text-slate-400">精準、透明、迅速、貼心 ｜ 線上服務大廳</span>
-    </div>
-  </footer>
-
 </div>

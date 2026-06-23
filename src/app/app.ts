@@ -1,355 +1,704 @@
-import { ChangeDetectionStrategy, Component, signal, computed, inject, OnInit } from '@angular/core';
-import { CommonModule } from '@angular/common';
-import { ReactiveFormsModule, FormBuilder, FormGroup, Validators } from '@angular/forms';
+import { CommonModule, isPlatformBrowser } from '@angular/common';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  OnInit,
+  PLATFORM_ID,
+  computed,
+  inject,
+  signal,
+} from '@angular/core';
+import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
-import { MatIconModule } from '@angular/material/icon';
 import { forkJoin } from 'rxjs';
+import {
+  Department,
+  HistoricalWorkbookPreview,
+  MunicipalCase,
+  Organization,
+  ReferenceCase,
+  Stats,
+} from './models';
 
-interface Department {
-  id: string;
-  name: string;
-  category: string;
-  responsibilities: string[];
-  contact: string;
-}
-
-interface CaseLog {
-  timestamp: string;
-  action: string;
-  operator: string;
-  details: string;
-}
-
-interface Case {
-  id: string;
-  title: string;
-  description: string;
-  category: string;
-  departmentId: string;
-  status: '待處理' | '處理中' | '已結案';
-  createdAt: string;
-  dispatchedAt: string;
-  confidence: number;
-  dispatchReason: string;
-  feedback?: string;
-  logs: CaseLog[];
-  citizenName?: string;
-  citizenPhone?: string;
-  location?: string;
-  urgency?: '一般' | '緊急' | '特急';
-  isManuallyRerouted?: boolean;
-}
-
-interface Stats {
-  totalCases: number;
-  accuracyRate: number;
-  statusCounts: {
-    pending: number;
-    processing: number;
-    closed: number;
-  };
-  apiMode: string;
-}
+type Tab = 'intake' | 'cases' | 'departments' | 'references' | 'organizations';
+type NoticeKind = 'success' | 'error' | 'info';
+type CaseStatusFilter = '全部' | MunicipalCase['status'] | '人工覆核';
 
 @Component({
-  changeDetection: ChangeDetectionStrategy.OnPush,
   selector: 'app-root',
-  imports: [CommonModule, ReactiveFormsModule, MatIconModule],
+  imports: [CommonModule, ReactiveFormsModule],
   templateUrl: './app.html',
   styleUrl: './app.css',
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class App implements OnInit {
-  private http = inject(HttpClient);
-  private fb = inject(FormBuilder);
+  private readonly http = inject(HttpClient);
+  private readonly fb = inject(FormBuilder);
+  private readonly platformId = inject(PLATFORM_ID);
 
-  Math = Math;
+  readonly activeTab = signal<Tab>('intake');
+  readonly loading = signal(false);
+  readonly saving = signal(false);
+  readonly message = signal('');
+  readonly noticeKind = signal<NoticeKind>('info');
+  readonly organizations = signal<Organization[]>([]);
+  readonly selectedOrganizationId = signal('');
+  readonly departments = signal<Department[]>([]);
+  readonly referenceCases = signal<ReferenceCase[]>([]);
+  readonly referenceTotal = signal(0);
+  readonly cases = signal<MunicipalCase[]>([]);
+  readonly selectedCase = signal<MunicipalCase | null>(null);
+  readonly dispatchResult = signal<MunicipalCase | null>(null);
+  readonly stats = signal<Stats | null>(null);
+  readonly search = signal('');
+  readonly caseStatusFilter = signal<CaseStatusFilter>('全部');
+  readonly referenceSearch = signal('');
+  readonly expandedDepartmentId = signal('');
+  readonly excelFileName = signal('');
+  readonly excelFileBuffer = signal<ArrayBuffer | null>(null);
+  readonly excelPreview = signal<HistoricalWorkbookPreview | null>(null);
 
-  getCountByStatus(status: '待處理' | '處理中' | '已結案'): number {
-    return this.cases().filter(c => c.status === status).length;
-  }
-
-  // App Layout State
-  activeTab = signal<'citizen' | 'admin' | 'rules'>('citizen');
-  isLoading = signal<boolean>(false);
-  isSubmitting = signal<boolean>(false);
-
-  // Form Groups
-  citizenForm!: FormGroup;
-  rerouteForm!: FormGroup;
-  statusForm!: FormGroup;
-
-  // Database Signals
-  departments = signal<Department[]>([]);
-  cases = signal<Case[]>([]);
-  selectedCase = signal<Case | null>(null);
-  stats = signal<Stats | null>(null);
-
-  // User Interactive States
-  dispatchFeedback = signal<Case | null>(null);
-  searchQuery = signal<string>('');
-  statusFilter = signal<string>('ALL');
-
-  // Computed Filters
-  filteredCases = computed(() => {
-    let list = this.cases();
-    const filter = this.statusFilter();
-    const query = this.searchQuery().trim().toLowerCase();
-
-    if (filter !== 'ALL') {
-      list = list.filter(c => c.status === filter);
+  readonly selectedOrganization = computed(() =>
+    this.organizations().find((organization) =>
+      organization.id === this.selectedOrganizationId()) ?? null,
+  );
+  readonly activeDepartments = computed(() =>
+    this.departments().filter((department) => department.isActive),
+  );
+  readonly filteredCases = computed(() => {
+    const query = this.search().trim().toLowerCase();
+    const filter = this.caseStatusFilter();
+    return this.cases().filter((caseItem) => {
+      const matchesQuery = !query ||
+        [caseItem.id, caseItem.externalId, caseItem.title, caseItem.description, caseItem.location]
+          .some((value) => value?.toLowerCase().includes(query));
+      const matchesStatus = filter === '全部' ||
+        (filter === '人工覆核'
+          ? caseItem.assignmentMode === 'manual_review'
+          : caseItem.status === filter);
+      return matchesQuery && matchesStatus;
+    });
+  });
+  readonly filteredReferenceCases = computed(() => {
+    const query = this.referenceSearch().trim().toLowerCase();
+    if (!query) {
+      return this.referenceCases();
     }
-    if (query) {
-      list = list.filter(c =>
-        c.title.toLowerCase().includes(query) ||
-        c.description.toLowerCase().includes(query) ||
-        c.id.toLowerCase().includes(query) ||
-        (c.location && c.location.toLowerCase().includes(query)) ||
-        c.category.toLowerCase().includes(query)
-      );
-    }
-    return list;
+    return this.referenceCases().filter((reference) =>
+      [reference.externalId, reference.title, reference.description, this.referenceDepartmentName(reference)]
+        .some((value) => value?.toLowerCase().includes(query)),
+    );
   });
 
-  // Setup sample address autofills for a smooth demo
-  sampleAddresses = [
-    '台北市大安區新生南路二段 1 號 (大安森林公園旁)',
-    '台北市信義區市府路 1 號 (市府大樓前)',
-    '台北市中山區中山北路二段 48 號',
-    '台北市萬華區廣州街 211 號 (龍山寺周邊)',
-    '台北市中正區羅斯福路四段 1 號'
-  ];
+  readonly organizationForm = this.fb.nonNullable.group({
+    id: [''],
+    code: ['', Validators.required],
+    name: ['', Validators.required],
+    assignmentThreshold: [0.25, [Validators.required, Validators.min(0), Validators.max(1)]],
+    isActive: [true],
+  });
 
-  ngOnInit() {
-    this.initForms();
-    this.loadInitialData();
-  }
+  readonly departmentForm = this.fb.nonNullable.group({
+    id: [''],
+    code: ['', Validators.required],
+    name: ['', Validators.required],
+    category: ['', Validators.required],
+    responsibilities: ['', Validators.required],
+    keywords: ['', Validators.required],
+    contact: [''],
+    isActive: [true],
+  });
 
-  // Initialize Forms strictly using Reactive Forms API
-  private initForms() {
-    this.citizenForm = this.fb.group({
-      title: ['', [Validators.required, Validators.minLength(4)]],
-      description: ['', [Validators.required, Validators.minLength(10)]],
-      citizenName: ['', Validators.required],
-      citizenPhone: ['', [Validators.required, Validators.pattern(/^[0-9\-+()# ]{8,15}$/)]],
-      location: ['', Validators.required],
-      urgency: ['一般', Validators.required]
-    });
+  readonly referenceForm = this.fb.nonNullable.group({
+    externalId: [''],
+    departmentId: ['', Validators.required],
+    title: ['', Validators.required],
+    description: ['', Validators.required],
+  });
 
-    this.rerouteForm = this.fb.group({
-      targetDepartmentId: ['', Validators.required],
-      rerouteReason: ['', [Validators.required, Validators.minLength(4)]]
-    });
+  readonly caseForm = this.fb.nonNullable.group({
+    externalId: [''],
+    citizenName: [''],
+    citizenPhone: [''],
+    location: [''],
+    urgency: ['一般' as MunicipalCase['urgency'], Validators.required],
+    title: ['', [Validators.required, Validators.minLength(3)]],
+    description: ['', [Validators.required, Validators.minLength(6)]],
+  });
 
-    this.statusForm = this.fb.group({
-      newStatus: ['處理中', Validators.required],
-      feedback: ['', [Validators.required, Validators.minLength(4)]]
-    });
-  }
+  readonly rerouteForm = this.fb.nonNullable.group({
+    departmentId: ['', Validators.required],
+    reason: ['', [Validators.required, Validators.minLength(3)]],
+  });
 
-  // Fetch all initial data using forkJoin in parallel
-  loadInitialData() {
-    this.isLoading.set(true);
-    forkJoin({
-      depts: this.http.get<Department[]>('/api/departments'),
-      casesList: this.http.get<Case[]>('/api/cases'),
-      statsData: this.http.get<Stats>('/api/stats')
-    }).subscribe({
-      next: (res) => {
-        this.departments.set(res.depts);
-        this.cases.set(res.casesList);
-        this.stats.set(res.statsData);
+  readonly statusForm = this.fb.nonNullable.group({
+    status: ['處理中' as MunicipalCase['status'], Validators.required],
+    feedback: [''],
+  });
 
-        if (res.casesList.length > 0) {
-          this.selectedCase.set(res.casesList[0]);
-        }
-        this.isLoading.set(false);
-      },
-      error: (err) => {
-        console.error('Failed to load municipal initial data', err);
-        this.isLoading.set(false);
-      }
-    });
-  }
-
-  // Refresh Stats Dashboard
-  loadStats() {
-    this.http.get<Stats>('/api/stats').subscribe({
-      next: (res) => this.stats.set(res),
-      error: (err) => console.error('Failed to refresh statistics', err)
-    });
-  }
-
-  // Trigger geolocation integration simulation
-  autofillCurrentLocation() {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          // Fill template mock coordinate
-          const lat = position.coords.latitude.toFixed(5);
-          const lng = position.coords.longitude.toFixed(5);
-          const randomAddr = this.sampleAddresses[Math.floor(Math.random() * this.sampleAddresses.length)];
-          this.citizenForm.patchValue({
-            location: `${randomAddr} (GPS 緯度: ${lat}, 經度: ${lng})`
-          });
-        },
-        () => {
-          const randomAddr = this.sampleAddresses[Math.floor(Math.random() * this.sampleAddresses.length)];
-          this.citizenForm.patchValue({
-            location: randomAddr
-          });
-        }
-      );
-    } else {
-      const randomAddr = this.sampleAddresses[Math.floor(Math.random() * this.sampleAddresses.length)];
-      this.citizenForm.patchValue({
-        location: randomAddr
-      });
+  ngOnInit(): void {
+    if (isPlatformBrowser(this.platformId)) {
+      this.loadOrganizations();
     }
   }
 
-  // Register municipal citizen input
-  submitCitizenCase() {
-    if (this.citizenForm.invalid) {
-      this.citizenForm.markAllAsTouched();
+  selectTab(tab: Tab): void {
+    this.activeTab.set(tab);
+    this.clearMessage();
+  }
+
+  clearMessage(): void {
+    this.message.set('');
+  }
+
+  showMessage(message: string, kind: NoticeKind = 'info'): void {
+    this.noticeKind.set(kind);
+    this.message.set(message);
+  }
+
+  fieldInvalid(formName: 'case' | 'department' | 'reference' | 'organization', field: string): boolean {
+    const control = formName === 'case'
+      ? this.caseForm.get(field)
+      : formName === 'department'
+        ? this.departmentForm.get(field)
+        : formName === 'reference'
+          ? this.referenceForm.get(field)
+          : this.organizationForm.get(field);
+    return Boolean(control?.invalid && (control.dirty || control.touched));
+  }
+
+  fillSampleCase(type: 'road' | 'environment'): void {
+    const samples = {
+      road: {
+        externalId: `DEMO-${new Date().getTime().toString().slice(-6)}`,
+        citizenName: '測試市民',
+        citizenPhone: '0900-000-000',
+        location: '中正路與和平路口',
+        urgency: '緊急' as const,
+        title: '道路出現大型坑洞',
+        description: '中正路與和平路口的柏油路面出現大型坑洞，車輛經過時容易發生危險，請儘速派員修補。',
+      },
+      environment: {
+        externalId: `DEMO-${new Date().getTime().toString().slice(-6)}`,
+        citizenName: '測試市民',
+        citizenPhone: '0900-000-000',
+        location: '公園路二段巷口',
+        urgency: '一般' as const,
+        title: '路旁堆積大量垃圾',
+        description: '公園路二段巷口堆放大型廢棄物與生活垃圾，已有異味並影響環境清潔，請協助清運。',
+      },
+    };
+    this.caseForm.setValue(samples[type]);
+    this.caseForm.markAsDirty();
+    this.dispatchResult.set(null);
+  }
+
+  viewDispatchResult(): void {
+    const result = this.dispatchResult();
+    if (!result) {
       return;
     }
+    this.selectCase(result);
+    this.activeTab.set('cases');
+  }
 
-    this.isSubmitting.set(true);
-    this.dispatchFeedback.set(null);
-
-    this.http.post<Case>('/api/cases', this.citizenForm.value).subscribe({
-      next: (newCase) => {
-        this.citizenForm.reset({ urgency: '一般' });
-        this.cases.update((list) => [newCase, ...list]);
-        this.selectedCase.set(newCase);
-        this.dispatchFeedback.set(newCase);
-        this.isSubmitting.set(false);
-        this.loadStats();
+  loadOrganizations(preferredId?: string): void {
+    this.loading.set(true);
+    this.http.get<Organization[]>('/api/organizations').subscribe({
+      next: (organizations) => {
+        this.organizations.set(organizations);
+        const selected =
+          organizations.find((item) => item.id === preferredId) ??
+          organizations.find((item) => item.isActive) ??
+          organizations[0];
+        this.selectedOrganizationId.set(selected?.id ?? '');
+        if (selected) {
+          this.loadOrganizationData();
+        } else {
+          this.loading.set(false);
+        }
       },
-      error: (err) => {
-        console.error('Failed to submit citizen case', err);
-        this.isSubmitting.set(false);
-        alert('陳情遞交異常：伺服器解析失敗，請重新確認填寫內容。');
-      }
+      error: () => {
+        this.showMessage('無法載入使用機關。', 'error');
+        this.loading.set(false);
+      },
     });
   }
 
-  // Re-route manually
-  submitReroute() {
-    const activeCase = this.selectedCase();
-    if (!activeCase) return;
+  changeOrganization(organizationId: string): void {
+    this.selectedOrganizationId.set(organizationId);
+    this.selectedCase.set(null);
+    this.dispatchResult.set(null);
+    this.loadOrganizationData();
+  }
 
-    if (this.rerouteForm.invalid) {
+  loadOrganizationData(): void {
+    const organizationId = this.selectedOrganizationId();
+    if (!organizationId) {
+      return;
+    }
+    this.loading.set(true);
+    forkJoin({
+      departments: this.http.get<Department[]>(
+        `/api/departments?organizationId=${encodeURIComponent(organizationId)}`,
+      ),
+      references: this.http.get<ReferenceCase[]>(
+        `/api/reference-cases?organizationId=${encodeURIComponent(organizationId)}&limit=500`,
+        { observe: 'response' },
+      ),
+      cases: this.http.get<MunicipalCase[]>(
+        `/api/cases?organizationId=${encodeURIComponent(organizationId)}`,
+      ),
+      stats: this.http.get<Stats>(
+        `/api/stats?organizationId=${encodeURIComponent(organizationId)}`,
+      ),
+    }).subscribe({
+      next: (result) => {
+        this.departments.set(result.departments);
+        this.referenceCases.set(result.references.body ?? []);
+        this.referenceTotal.set(
+          Number(result.references.headers.get('X-Total-Count')) ||
+          result.references.body?.length ||
+          0,
+        );
+        this.cases.set(result.cases);
+        this.stats.set(result.stats);
+        this.selectedCase.set(result.cases[0] ?? null);
+        this.loading.set(false);
+      },
+      error: () => {
+        this.showMessage('載入機關資料失敗。', 'error');
+        this.loading.set(false);
+      },
+    });
+  }
+
+  saveOrganization(): void {
+    if (this.organizationForm.invalid) {
+      this.organizationForm.markAllAsTouched();
+      return;
+    }
+    this.saving.set(true);
+    const value = this.organizationForm.getRawValue();
+    const request = value.id
+      ? this.http.put<Organization>(`/api/organizations/${value.id}`, value)
+      : this.http.post<Organization>('/api/organizations', value);
+    request.subscribe({
+      next: (organization) => {
+        this.organizationForm.reset({
+          id: '',
+          code: '',
+          name: '',
+          assignmentThreshold: 0.25,
+          isActive: true,
+        });
+        this.showMessage('使用機關已儲存。', 'success');
+        this.saving.set(false);
+        this.loadOrganizations(organization.id);
+      },
+      error: (error: { error?: { error?: string } }) => {
+        this.showMessage(error.error?.error ?? '儲存使用機關失敗。', 'error');
+        this.saving.set(false);
+      },
+    });
+  }
+
+  editOrganization(organization: Organization): void {
+    this.organizationForm.setValue({
+      id: organization.id,
+      code: organization.code,
+      name: organization.name,
+      assignmentThreshold: organization.assignmentThreshold,
+      isActive: organization.isActive,
+    });
+    this.showMessage(`正在編輯「${organization.name}」。`, 'info');
+  }
+
+  resetOrganizationForm(): void {
+    this.organizationForm.reset({
+      id: '',
+      code: '',
+      name: '',
+      assignmentThreshold: 0.25,
+      isActive: true,
+    });
+  }
+
+  toggleOrganization(organization: Organization): void {
+    this.saving.set(true);
+    this.http.put<Organization>(`/api/organizations/${organization.id}`, {
+      isActive: !organization.isActive,
+    }).subscribe({
+      next: () => {
+        this.saving.set(false);
+        this.showMessage(
+          `${organization.name}已${organization.isActive ? '停用' : '啟用'}。`,
+          'success',
+        );
+        this.loadOrganizations(this.selectedOrganizationId());
+      },
+      error: () => {
+        this.saving.set(false);
+        this.showMessage('切換機關狀態失敗。', 'error');
+      },
+    });
+  }
+
+  saveDepartment(): void {
+    if (this.departmentForm.invalid || !this.selectedOrganizationId()) {
+      this.departmentForm.markAllAsTouched();
+      return;
+    }
+    this.saving.set(true);
+    const value = this.departmentForm.getRawValue();
+    const payload = {
+      ...value,
+      organizationId: this.selectedOrganizationId(),
+    };
+    const request = value.id
+      ? this.http.put<Department>(`/api/departments/${value.id}`, payload)
+      : this.http.post<Department>('/api/departments', payload);
+    request.subscribe({
+      next: () => {
+        this.resetDepartmentForm();
+        this.showMessage('責任局處已儲存。', 'success');
+        this.saving.set(false);
+        this.loadOrganizationData();
+      },
+      error: (error: { error?: { error?: string } }) => {
+        this.showMessage(error.error?.error ?? '儲存責任局處失敗。', 'error');
+        this.saving.set(false);
+      },
+    });
+  }
+
+  editDepartment(department: Department): void {
+    this.departmentForm.setValue({
+      id: department.id,
+      code: department.code,
+      name: department.name,
+      category: department.category,
+      responsibilities: department.responsibilities.join('，'),
+      keywords: department.keywords.join('，'),
+      contact: department.contact,
+      isActive: department.isActive,
+    });
+    this.expandedDepartmentId.set(department.id);
+    this.showMessage(`正在編輯「${department.name}」。`, 'info');
+  }
+
+  toggleDepartment(department: Department): void {
+    this.saving.set(true);
+    this.http.put<Department>(`/api/departments/${department.id}`, {
+      isActive: !department.isActive,
+    }).subscribe({
+      next: () => {
+        this.saving.set(false);
+        this.showMessage(
+          `${department.name}已${department.isActive ? '停用' : '啟用'}。`,
+          'success',
+        );
+        this.loadOrganizationData();
+      },
+      error: () => {
+        this.saving.set(false);
+        this.showMessage('切換局處狀態失敗。', 'error');
+      },
+    });
+  }
+
+  toggleDepartmentDetails(departmentId: string): void {
+    this.expandedDepartmentId.update((current) => current === departmentId ? '' : departmentId);
+  }
+
+  resetDepartmentForm(): void {
+    this.departmentForm.reset({
+      id: '',
+      code: '',
+      name: '',
+      category: '',
+      responsibilities: '',
+      keywords: '',
+      contact: '',
+      isActive: true,
+    });
+  }
+
+  saveReference(): void {
+    if (this.referenceForm.invalid || !this.selectedOrganizationId()) {
+      this.referenceForm.markAllAsTouched();
+      return;
+    }
+    this.saving.set(true);
+    this.http.post<ReferenceCase>('/api/reference-cases', {
+      ...this.referenceForm.getRawValue(),
+      organizationId: this.selectedOrganizationId(),
+    }).subscribe({
+      next: () => {
+        this.referenceForm.reset({
+          externalId: '',
+          departmentId: '',
+          title: '',
+          description: '',
+        });
+        this.showMessage('參考案例已新增。', 'success');
+        this.saving.set(false);
+        this.loadOrganizationData();
+      },
+      error: (error: { error?: { error?: string } }) => {
+        this.showMessage(error.error?.error ?? '新增參考案例失敗。', 'error');
+        this.saving.set(false);
+      },
+    });
+  }
+
+  importCsv(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file || !this.selectedOrganizationId()) {
+      return;
+    }
+    file.text().then((csvText) => {
+      this.saving.set(true);
+      this.http.post<{ imported: number; errors: { row: number; message: string }[] }>(
+        '/api/reference-cases/import',
+        { organizationId: this.selectedOrganizationId(), csvText },
+      ).subscribe({
+        next: (result) => {
+          const errorText = result.errors.length
+            ? `；${result.errors.map((item) => `第${item.row}列 ${item.message}`).join('、')}`
+            : '';
+          this.showMessage(
+            `已匯入 ${result.imported} 筆${errorText}`,
+            result.errors.length ? 'info' : 'success',
+          );
+          this.saving.set(false);
+          input.value = '';
+          this.loadOrganizationData();
+        },
+        error: (error: { error?: { error?: string } }) => {
+          this.showMessage(error.error?.error ?? 'CSV 匯入失敗。', 'error');
+          this.saving.set(false);
+        },
+      });
+    });
+  }
+
+  previewExcel(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file || !this.selectedOrganizationId()) {
+      return;
+    }
+    if (!file.name.toLowerCase().endsWith('.xlsx')) {
+      this.showMessage('請選擇 .xlsx 格式的 Excel 檔案。', 'error');
+      input.value = '';
+      return;
+    }
+    this.saving.set(true);
+    this.excelPreview.set(null);
+    file.arrayBuffer().then((buffer) => {
+      this.http.post<HistoricalWorkbookPreview>(
+        '/api/reference-cases/xlsx/preview',
+        buffer,
+        {
+          params: { organizationId: this.selectedOrganizationId() },
+          headers: {
+            'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          },
+        },
+      ).subscribe({
+        next: (preview) => {
+          this.excelFileName.set(file.name);
+          this.excelFileBuffer.set(buffer);
+          this.excelPreview.set(preview);
+          this.saving.set(false);
+          this.showMessage(
+            `已讀取 ${preview.rawRows.toLocaleString()} 筆流程紀錄，合併為 ${preview.uniqueCases.toLocaleString()} 件案例。`,
+            'success',
+          );
+        },
+        error: (error: { error?: { error?: string } }) => {
+          this.saving.set(false);
+          this.excelFileName.set('');
+          this.excelFileBuffer.set(null);
+          this.showMessage(error.error?.error ?? 'Excel 檔案解析失敗。', 'error');
+          input.value = '';
+        },
+      });
+    }).catch(() => {
+      this.saving.set(false);
+      this.showMessage('無法讀取 Excel 檔案。', 'error');
+    });
+  }
+
+  importExcel(): void {
+    const buffer = this.excelFileBuffer();
+    if (!buffer || !this.selectedOrganizationId()) {
+      this.showMessage('請先選擇並預覽 Excel 檔案。', 'error');
+      return;
+    }
+    this.saving.set(true);
+    this.http.post<{
+      imported: number;
+      duplicateCases: number;
+      skippedRows: number;
+      rawRows: number;
+      duplicateWorkflowRows: number;
+      createdDepartments: string[];
+    }>(
+      '/api/reference-cases/xlsx/import',
+      buffer,
+      {
+        params: { organizationId: this.selectedOrganizationId() },
+        headers: {
+          'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        },
+      },
+    ).subscribe({
+      next: (result) => {
+        this.saving.set(false);
+        this.excelFileName.set('');
+        this.excelFileBuffer.set(null);
+        this.excelPreview.set(null);
+        const departmentText = result.createdDepartments.length
+          ? `，並建立 ${result.createdDepartments.length} 個責任局處`
+          : '';
+        this.showMessage(
+          `已匯入 ${result.imported.toLocaleString()} 件歷史案例${departmentText}；略過 ${result.duplicateCases.toLocaleString()} 件既有案例。`,
+          'success',
+        );
+        this.loadOrganizationData();
+      },
+      error: (error: { error?: { error?: string } }) => {
+        this.saving.set(false);
+        this.showMessage(error.error?.error ?? 'Excel 匯入失敗。', 'error');
+      },
+    });
+  }
+
+  clearExcelSelection(input?: HTMLInputElement): void {
+    this.excelFileName.set('');
+    this.excelFileBuffer.set(null);
+    this.excelPreview.set(null);
+    if (input) {
+      input.value = '';
+    }
+  }
+
+  submitCase(): void {
+    if (this.caseForm.invalid || !this.selectedOrganizationId()) {
+      this.caseForm.markAllAsTouched();
+      return;
+    }
+    this.saving.set(true);
+    this.http.post<MunicipalCase>('/api/cases', {
+      ...this.caseForm.getRawValue(),
+      organizationId: this.selectedOrganizationId(),
+    }).subscribe({
+      next: (caseItem) => {
+        this.caseForm.reset({
+          externalId: '',
+          citizenName: '',
+          citizenPhone: '',
+          location: '',
+          urgency: '一般',
+          title: '',
+          description: '',
+        });
+        this.dispatchResult.set(caseItem);
+        this.selectedCase.set(caseItem);
+        this.cases.update((items) => [caseItem, ...items]);
+        this.saving.set(false);
+        this.showMessage(
+          caseItem.assignmentMode === 'auto'
+            ? `案件已自動分派至${this.departmentName(caseItem.departmentId)}。`
+            : '案件信心分數未達門檻，已送交人工覆核。',
+          caseItem.assignmentMode === 'auto' ? 'success' : 'info',
+        );
+        this.refreshStats();
+      },
+      error: (error: { error?: { error?: string } }) => {
+        this.showMessage(error.error?.error ?? '建立案件失敗。', 'error');
+        this.saving.set(false);
+      },
+    });
+  }
+
+  selectCase(caseItem: MunicipalCase): void {
+    this.selectedCase.set(caseItem);
+    this.rerouteForm.reset({ departmentId: '', reason: '' });
+    this.statusForm.reset({ status: caseItem.status, feedback: caseItem.feedback ?? '' });
+  }
+
+  rerouteCase(): void {
+    const caseItem = this.selectedCase();
+    if (!caseItem || this.rerouteForm.invalid) {
       this.rerouteForm.markAllAsTouched();
       return;
     }
-
-    const { targetDepartmentId, rerouteReason } = this.rerouteForm.value;
-
-    this.http.post<Case>(`/api/cases/${activeCase.id}/dispatch`, {
-      departmentId: targetDepartmentId,
-      reason: rerouteReason
+    this.saving.set(true);
+    this.http.post<MunicipalCase>(`/api/cases/${caseItem.id}/dispatch`, {
+      ...this.rerouteForm.getRawValue(),
+      operator: '管理者',
     }).subscribe({
-      next: (updatedCase) => {
-        this.cases.update((list) => list.map(c => c.id === updatedCase.id ? updatedCase : c));
-        this.selectedCase.set(updatedCase);
-        this.rerouteForm.reset();
-        this.loadStats();
+      next: (updated) => {
+        this.saving.set(false);
+        this.rerouteForm.reset({ departmentId: '', reason: '' });
+        this.replaceCase(updated, '案件已人工改派。');
       },
-      error: (err) => {
-        console.error('Manual reroute failed', err);
-        alert('人工改分派單發生異常，請重試。');
-      }
+      error: (error: { error?: { error?: string } }) => {
+        this.saving.set(false);
+        this.showMessage(error.error?.error ?? '人工改派失敗。', 'error');
+      },
     });
   }
 
-  // Update Status & resolve feedback
-  submitStatusUpdate() {
-    const activeCase = this.selectedCase();
-    if (!activeCase) return;
-
-    if (this.statusForm.invalid) {
-      this.statusForm.markAllAsTouched();
+  updateStatus(): void {
+    const caseItem = this.selectedCase();
+    if (!caseItem || this.statusForm.invalid) {
       return;
     }
-
-    const { newStatus, feedback } = this.statusForm.value;
-
-    this.http.post<Case>(`/api/cases/${activeCase.id}/status`, {
-      status: newStatus,
-      feedback: feedback
+    this.saving.set(true);
+    this.http.post<MunicipalCase>(`/api/cases/${caseItem.id}/status`, {
+      ...this.statusForm.getRawValue(),
+      operator: '承辦人員',
     }).subscribe({
-      next: (updatedCase) => {
-        this.cases.update((list) => list.map(c => c.id === updatedCase.id ? updatedCase : c));
-        this.selectedCase.set(updatedCase);
-        this.statusForm.reset({ newStatus: '已結案' });
-        this.loadStats();
+      next: (updated) => {
+        this.saving.set(false);
+        this.replaceCase(updated, '案件狀態已更新。');
       },
-      error: (err) => {
-        console.error('Status updating failed', err);
-        alert('狀態更新回報發生異常，請重試。');
-      }
+      error: () => {
+        this.saving.set(false);
+        this.showMessage('更新案件狀態失敗。', 'error');
+      },
     });
   }
 
-  // Helper getters
-  getDeptName(id: string): string {
-    const dept = this.departments().find(d => d.id === id);
-    return dept ? dept.name : '未分派單位';
-  }
-
-  getDeptActiveCount(deptId: string): number {
-    return this.cases().filter(c => c.departmentId === deptId).length;
-  }
-
-  // Simple quick seed generators for demo convenience
-  autofillDemoCase(type: ' streetlight' | 'noise' | 'food' | 'dogs') {
-    const mockDataMap = {
-      ' streetlight': {
-        title: '內湖大湖街 120 巷口路燈故障不亮',
-        description: '大湖街 120 巷口那盞黃色路燈已經閃爍快一週了，昨晚完全不亮。這條巷子很多人晚上散步或帶小孩，沒有路燈非常黑，很容易在轉角滑倒掉進旁邊排水溝，希望養工處工班能來維修。',
-        citizenName: '曾義雄',
-        citizenPhone: '0977-888-999',
-        location: '台北市內湖區大湖街 120 巷口',
-        urgency: '緊急'
-      },
-      'noise': {
-        title: '忠孝東路四段商業大樓周邊工地深夜施工大噪',
-        description: '在忠孝東路四段這邊的商業大樓旁邊，都已經超過晚上 11:30 了，工地居然還在用重型吊車與挖土機，鋼材震動鏗鏘作響，分貝超級大根本無法安心睡覺，打過去勸導都沒用，請環保局立刻來量音量與限期取締改善。',
-        citizenName: '林曉梅',
-        citizenPhone: '0956-254-152',
-        location: '台北市大安區忠孝東路四段 210 號旁工地',
-        urgency: '特急'
-      },
-      'food': {
-        title: '饒河夜市某連鎖牛排熟食發霉且環境髒亂',
-        description: '昨晚到饒河夜市這家連鎖牛排用餐，上餐發現玉米濃湯盤底居然黑黑一片疑似沒洗乾淨，調味料瓶蓋上甚至有一層白色黴菌！洗碗的地方有蒼蠅嗡嗡飛，回家後半夜拉了兩次肚子，高度懷疑食物中毒，請抽查檢驗。',
-        citizenName: '楊先生',
-        citizenPhone: '0911-365-248',
-        location: '台北市松山區饒河街 150 號',
-        urgency: '一般'
-      },
-      'dogs': {
-        title: '興隆路二段公園人行道有死貓死狗屍體需要清理',
-        description: '在興隆路二段隔壁社區公園的外圍人行道草叢旁，有一隻流浪貓不幸死亡躺在地上。今天天氣太熱了，已經發出明顯的異味與招引蒼蠅，非常影響市容與公共環境衛生，請清潔隊盡快派車來清理遺體。',
-        citizenName: '陳鄰長',
-        citizenPhone: '0988-332-114',
-        location: '台北市文山區興隆路二段 60 號公園人行道旁',
-        urgency: '緊急'
-      }
-    };
-
-    const targetData = mockDataMap[type];
-    if (targetData) {
-      this.citizenForm.patchValue(targetData);
+  departmentName(departmentId?: string): string {
+    if (!departmentId) {
+      return '待人工覆核';
     }
+    return this.departments().find((item) => item.id === departmentId)?.name ?? '未知局處';
   }
 
-  // Switch tab with helper clear
-  selectTab(tab: 'citizen' | 'admin' | 'rules') {
-    this.activeTab.set(tab);
-    if (tab === 'admin' && this.cases().length > 0 && !this.selectedCase()) {
-      this.selectedCase.set(this.cases()[0]);
-    }
+  referenceDepartmentName(reference: ReferenceCase): string {
+    return this.departmentName(reference.departmentId);
+  }
+
+  private replaceCase(updated: MunicipalCase, message: string): void {
+    this.cases.update((items) =>
+      items.map((item) => item.id === updated.id ? updated : item),
+    );
+    this.selectedCase.set(updated);
+    this.showMessage(message, 'success');
+    this.refreshStats();
+  }
+
+  private refreshStats(): void {
+    const organizationId = this.selectedOrganizationId();
+    this.http.get<Stats>(
+      `/api/stats?organizationId=${encodeURIComponent(organizationId)}`,
+    ).subscribe((stats) => this.stats.set(stats));
   }
 }

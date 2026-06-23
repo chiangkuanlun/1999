@@ -5,9 +5,15 @@ import {
   writeResponseToNodeResponse,
 } from '@angular/ssr/node';
 import { GoogleGenAI, Type } from '@google/genai';
+import { config as loadEnv } from 'dotenv';
 import express, { NextFunction, Request, Response } from 'express';
 import { join } from 'node:path';
 import { parseReferenceCsv } from './server/csv';
+import {
+  buildRoutingPrompt,
+  createLlmUnavailableResult,
+  LlmClassification,
+} from './server/llm-routing';
 import {
   Department,
   MunicipalCase,
@@ -19,10 +25,13 @@ import { JsonStore } from './server/store';
 import { parseHistoricalWorkbook } from './server/xlsx-import';
 
 const browserDistFolder = join(import.meta.dirname, '../browser');
+loadEnv({ path: join(process.cwd(), '.env.local') });
+loadEnv();
 const app = express();
 const angularApp = new AngularNodeAppEngine();
 const store = new JsonStore();
 const geminiApiKey = process.env['GEMINI_API_KEY'];
+const geminiModel = process.env['GEMINI_MODEL'] || 'gemini-3.5-flash';
 const ai = geminiApiKey ? new GoogleGenAI({ apiKey: geminiApiKey }) : null;
 
 app.use(express.json({ limit: '5mb' }));
@@ -82,26 +91,13 @@ async function geminiRoute(
       (department) => department.organizationId === organization.id && department.isActive,
     );
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: `請依責任權責與參考案例分類此1999案件。
-案件標題：${title}
-案件內容：${description}
-責任局處：${JSON.stringify(activeDepartments.map((department) => ({
-        id: department.id,
-        name: department.name,
-        category: department.category,
-        responsibilities: department.responsibilities,
-        keywords: department.keywords,
-      })))}
-參考案例：${JSON.stringify(references
-        .filter((reference) => reference.organizationId === organization.id)
-        .slice(-100)
-        .map((reference) => ({
-          id: reference.id,
-          departmentId: reference.departmentId,
-          title: reference.title,
-          description: reference.description,
-        })))}`,
+      model: geminiModel,
+      contents: buildRoutingPrompt(
+        title,
+        description,
+        activeDepartments,
+        references.filter((reference) => reference.organizationId === organization.id),
+      ),
       config: {
         responseMimeType: 'application/json',
         responseSchema: {
@@ -112,18 +108,25 @@ async function geminiRoute(
             confidence: { type: Type.NUMBER },
             reason: { type: Type.STRING },
             matchedReferenceId: { type: Type.STRING },
+            candidates: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  departmentId: { type: Type.STRING },
+                  confidence: { type: Type.NUMBER },
+                  reason: { type: Type.STRING },
+                  matchedReferenceId: { type: Type.STRING },
+                },
+                required: ['departmentId', 'confidence', 'reason'],
+              },
+            },
           },
-          required: ['departmentId', 'category', 'confidence', 'reason'],
+          required: ['departmentId', 'category', 'confidence', 'reason', 'candidates'],
         },
       },
     });
-    const parsed = JSON.parse(response.text ?? '{}') as {
-      departmentId?: string;
-      category?: string;
-      confidence?: number;
-      reason?: string;
-      matchedReferenceId?: string;
-    };
+    const parsed = JSON.parse(response.text ?? '{}') as Partial<LlmClassification>;
     const selectedDepartment = activeDepartments.find(
       (department) => department.id === parsed.departmentId,
     );
@@ -132,6 +135,29 @@ async function geminiRoute(
     }
     const confidence = numberInRange(parsed.confidence, 0);
     const assigned = confidence >= organization.assignmentThreshold;
+    const parsedCandidates = Array.isArray(parsed.candidates)
+      ? parsed.candidates
+        .map((candidate) => {
+          const department = activeDepartments.find(
+            (item) => item.id === candidate.departmentId,
+          );
+          if (!department) {
+            return null;
+          }
+          return {
+            departmentId: department.id,
+            departmentName: department.name,
+            score: numberInRange(candidate.confidence, 0),
+            referenceScore: 0,
+            keywordScore: 0,
+            ...(candidate.matchedReferenceId
+              ? { matchedReferenceId: candidate.matchedReferenceId }
+              : {}),
+          };
+        })
+        .filter((candidate) => candidate !== null)
+        .slice(0, 5)
+      : [];
     return {
       assigned,
       ...(assigned ? { departmentId: selectedDepartment.id } : {}),
@@ -145,16 +171,17 @@ async function geminiRoute(
       ...(parsed.matchedReferenceId
         ? { matchedReferenceId: parsed.matchedReferenceId }
         : {}),
-      candidates: [{
-        departmentId: selectedDepartment.id,
-        departmentName: selectedDepartment.name,
-        score: confidence,
-        referenceScore: 0,
-        keywordScore: 0,
-        ...(parsed.matchedReferenceId
-          ? { matchedReferenceId: parsed.matchedReferenceId }
-          : {}),
-      }],
+      candidates: parsedCandidates.length ? parsedCandidates : [{
+          departmentId: selectedDepartment.id,
+          departmentName: selectedDepartment.name,
+          score: confidence,
+          referenceScore: 0,
+          keywordScore: 0,
+          ...(parsed.matchedReferenceId
+            ? { matchedReferenceId: parsed.matchedReferenceId }
+            : {}),
+        }],
+      engine: 'gemini',
     };
   } catch (error) {
     console.warn('Gemini 分派失敗，改用本地案例比對：', error);
@@ -163,7 +190,12 @@ async function geminiRoute(
 }
 
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', aiMode: ai ? 'Gemini + 本地 fallback' : '本地案例比對' });
+  res.json({
+    status: 'ok',
+    aiMode: ai ? `Gemini LLM（${geminiModel}）` : 'LLM 未設定',
+    llmConfigured: Boolean(ai),
+    llmModel: geminiModel,
+  });
 });
 
 app.get('/api/organizations', (_req, res) => {
@@ -511,21 +543,24 @@ app.post('/api/cases', async (req, res) => {
     return;
   }
   const snapshot = store.snapshot();
-  const routing =
-    await geminiRoute(
-      organization,
-      snapshot.departments,
-      snapshot.referenceCases,
-      title,
-      description,
-    ) ??
-    routeCase(
+  const localSuggestion = routeCase(
+    organization,
+    snapshot.departments,
+    snapshot.referenceCases,
+    title,
+    description,
+  );
+  const llmRouting = await geminiRoute(
       organization,
       snapshot.departments,
       snapshot.referenceCases,
       title,
       description,
     );
+  const routing = llmRouting ?? createLlmUnavailableResult(
+    localSuggestion,
+    ai ? 'request_failed' : 'not_configured',
+  );
   const timestamp = new Date().toISOString();
   const caseItem: MunicipalCase = {
     id: id('case'),
@@ -543,6 +578,8 @@ app.post('/api/cases', async (req, res) => {
     ...(routing.departmentId ? { departmentId: routing.departmentId } : {}),
     status: '待處理',
     assignmentMode: routing.assigned ? 'auto' : 'manual_review',
+    routingEngine: routing.engine,
+    ...(routing.llmIssue ? { llmIssue: routing.llmIssue } : {}),
     confidence: routing.confidence,
     dispatchReason: routing.reason,
     ...(routing.matchedReferenceId
@@ -640,7 +677,9 @@ app.get('/api/stats', (req, res) => {
     },
     autoAssignmentRate: cases.length ? Math.round(autoAssigned / cases.length * 1000) / 10 : 0,
     manualRerouteRate: cases.length ? Math.round(manuallyRerouted / cases.length * 1000) / 10 : 0,
-    apiMode: ai ? 'Gemini + 本地案例比對 fallback' : '本地案例比對',
+    apiMode: ai ? `Gemini LLM（${geminiModel}）` : 'LLM 未設定',
+    llmConfigured: Boolean(ai),
+    llmModel: geminiModel,
   });
 });
 

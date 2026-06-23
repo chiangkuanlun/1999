@@ -18,6 +18,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .topbar p { margin: 0; color: #c7dbd3; }
 .system-badges { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: 1.1rem; }
 .system-badges span { display: flex; align-items: center; gap: .4rem; padding: .35rem .6rem; border: 1px solid #ffffff24; border-radius: 99px; color: #d8e9e2; background: #ffffff0c; font-size: .7rem; font-weight: 750; }
+.system-badges span.engine-warning { color: #ffe0a3; border-color: #ffce703d; background: #9b5b171f; }
 .online-dot { width: .5rem; height: .5rem; border-radius: 50%; background: #6ee7a7; box-shadow: 0 0 0 4px #6ee7a722; }
 .kicker { font: 800 .7rem/1 monospace; letter-spacing: .18em; color: #8ed0b5; }
 .organization-picker { min-width: 250px; color: #c7dbd3; }
@@ -91,6 +92,11 @@ small { display: block; color: #849088; font-size: .72rem; }
 .notice.error > span { background: #b5423d; }
 .loading { display: flex; align-items: center; gap: .5rem; margin-bottom: 1rem; color: #5f6d66; }
 .loading span { width: .9rem; height: .9rem; border: 2px solid #b6c2bc; border-top-color: #0f6b4a; border-radius: 50%; animation: spin .7s linear infinite; }
+.llm-warning { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; padding: .9rem 1rem; border: 1px solid #e4b660; border-radius: 12px; color: #70460b; background: #fff8e7; }
+.llm-warning strong, .llm-warning span { display: block; }
+.llm-warning span { margin-top: .15rem; font-size: .78rem; }
+.llm-warning code { padding: .4rem .55rem; border-radius: 6px; color: #70460b; background: #ffecc4; font-size: .72rem; }
+.engine-label { display: block; margin-top: .5rem; color: #65736c; font-size: .72rem; font-weight: 750; }
 
 .context-bar { display: grid; grid-template-columns: 1.4fr .8fr .8fr 2fr; gap: .65rem; margin-bottom: 1rem; padding: .75rem; border: 1px solid #d7d8ce; border-radius: 14px; background: #fffef9; }
 .context-bar > div { display: flex; flex-direction: column; justify-content: center; padding: .45rem .65rem; border-right: 1px solid #e4e5de; }
@@ -198,4 +204,5 @@ th { color: #718078; font-size: .72rem; }
   .toolbar input { max-width: none; }
   .mapping-grid, .preview-metrics, .preview-samples > div { grid-template-columns: 1fr; }
   .preview-samples span:last-child { text-align: left; }
+  .llm-warning { align-items: flex-start; flex-direction: column; }
 }

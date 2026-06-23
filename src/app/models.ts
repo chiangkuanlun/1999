@@ -84,6 +84,8 @@ export interface MunicipalCase {
   departmentId?: string;
   status: '待處理' | '處理中' | '已結案';
   assignmentMode: 'auto' | 'manual_review' | 'manual';
+  routingEngine?: 'gemini' | 'local_similarity' | 'local_suggestion';
+  llmIssue?: 'not_configured' | 'request_failed';
   confidence: number;
   dispatchReason: string;
   matchedReferenceId?: string;
@@ -105,4 +107,6 @@ export interface Stats {
   autoAssignmentRate: number;
   manualRerouteRate: number;
   apiMode: string;
+  llmConfigured: boolean;
+  llmModel: string;
 }

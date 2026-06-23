@@ -7,8 +7,8 @@ Angular 21 + Express SSR 的多機關 1999 案件管理 MVP。系統可維護使
 - 使用機關 CRUD、啟停與個別自動分派門檻
 - 責任局處 CRUD、啟停、權責、關鍵字與聯絡資訊
 - 單筆新增、UTF-8 CSV，以及 1999 歷史案件 Excel 批次匯入
-- 中文 bigram、英文詞元、Jaccard 案例相似度與關鍵字比對
-- 有 `GEMINI_API_KEY` 時優先使用 Gemini，失敗時自動切回本地案例比對
+- Gemini LLM 語意分析責任權責、縮寫、同義詞及歷史案例
+- 本地文字相似度只提供候選建議，不會在 LLM 未設定或失敗時自動分派
 - 保存候選局處、信心分數、理由、命中參考案例與案件軌跡
 - 低信心案件進入人工覆核，管理者可人工改派及填寫理由
 - 案件狀態、處理回覆與基本統計
@@ -32,11 +32,20 @@ npm run serve:ssr:app
 
 ```env
 GEMINI_API_KEY=your-key
+GEMINI_MODEL=gemini-3.5-flash
 CASE_ROUTING_DATA=/absolute/path/case-routing.json
 PORT=4000
 ```
 
-未設定 `GEMINI_API_KEY` 時，系統仍可使用本地參考案例及權責關鍵字分派。資料檔預設為 `data/case-routing.json`，該路徑已加入 `.gitignore`。
+本機開發會自動讀取專案根目錄的 `.env.local`。未設定 `GEMINI_API_KEY` 或 LLM 呼叫失敗時，系統只會顯示本地相似度候選並保留人工覆核，不會將關鍵字結果當成自動分派。
+
+PowerShell 可用下列方式建立本機設定：
+
+```powershell
+Copy-Item .env.example .env.local
+notepad .env.local
+npm.cmd run dev
+```
 
 ## CSV 格式
 

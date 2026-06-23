@@ -6,7 +6,9 @@
       <p>以機關權責、歷史案例與 Gemini 分析協助案件準確分流。</p>
       <div class="system-badges">
         <span><i class="online-dot"></i>系統服務正常</span>
-        <span>{{ stats()?.apiMode || '載入分派引擎中' }}</span>
+        <span [class.engine-warning]="stats() && !stats()?.llmConfigured">
+          {{ stats()?.apiMode || '載入分派引擎中' }}
+        </span>
       </div>
     </div>
     <label class="organization-picker">
@@ -39,6 +41,12 @@
     }
     @if (loading()) {
       <div class="loading"><span></span>資料載入中…</div>
+    }
+    @if (stats() && !stats()?.llmConfigured) {
+      <div class="llm-warning" role="alert">
+        <div><strong>LLM 尚未啟用</strong><span>目前只會產生本地候選建議，不會自動分派案件。</span></div>
+        <code>請在 .env.local 設定 GEMINI_API_KEY</code>
+      </div>
     }
 
     @if (activeTab() === 'intake') {
@@ -101,7 +109,10 @@
           </div>
           @if (dispatchResult(); as result) {
             <span class="status" [class.review]="result.assignmentMode === 'manual_review'">
-              {{ result.assignmentMode === 'auto' ? '自動分派完成' : '需人工覆核' }}
+              {{ result.assignmentMode === 'auto' ? 'LLM 自動分派完成' : result.llmIssue ? 'LLM 未執行' : '需人工覆核' }}
+            </span>
+            <span class="engine-label">
+              判定引擎：{{ result.routingEngine === 'gemini' ? 'Gemini LLM 語意分析' : '本地候選建議' }}
             </span>
             <div class="confidence">{{ result.confidence | percent:'1.0-1' }}</div>
             <h3>{{ departmentName(result.departmentId) }}</h3>

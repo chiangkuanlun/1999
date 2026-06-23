@@ -13,6 +13,8 @@ export interface RoutingResult {
   reason: string;
   matchedReferenceId?: string;
   candidates: CandidateScore[];
+  engine: 'gemini' | 'local_similarity' | 'local_suggestion';
+  llmIssue?: 'not_configured' | 'request_failed';
 }
 
 export function normalizeText(value: string): string {
@@ -109,6 +111,7 @@ export function routeCase(
       confidence: 0,
       reason: '此機關尚無啟用中的責任局處，需由管理者人工處理。',
       candidates: [],
+      engine: 'local_similarity',
     };
   }
 
@@ -131,6 +134,6 @@ export function routeCase(
       ? { matchedReferenceId: best.matchedReferenceId }
       : {}),
     candidates: candidates.slice(0, 5),
+    engine: 'local_similarity',
   };
 }
-

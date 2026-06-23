@@ -74,6 +74,8 @@ export interface MunicipalCase {
   departmentId?: string;
   status: CaseStatus;
   assignmentMode: AssignmentMode;
+  routingEngine?: 'gemini' | 'local_similarity' | 'local_suggestion';
+  llmIssue?: 'not_configured' | 'request_failed';
   confidence: number;
   dispatchReason: string;
   matchedReferenceId?: string;
